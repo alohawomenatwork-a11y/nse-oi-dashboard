@@ -1030,23 +1030,38 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         trigger_time = bars_time[entry_bar] if entry_bar < len(bars_time) else "09:20"
         exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
 
-        res["triggered"] = True
-        res["entry_price"] = entry_price
-        res["entry_bar"] = entry_bar
-        res["trigger_time"] = trigger_time
-        res["exit_price"] = exit_price
-        res["exit_reason"] = exit_reason
-        res["exit_time"] = exit_time
-        res["qty"] = qty
-        res["exposure"] = total_exposure
-        res["margin_used"] = margin_used
-        res["capital_used"] = margin_used
-        res["risk_rupees"] = total_risk_rupees
-        res["risk_pct"] = risk_pct
-        res["max_profit_rupees"] = max_profit_rupees
-        res["max_profit_pct"] = max_profit_pct
-        res["pnl"] = pnl
-        res["pnl_pct"] = pnl_pct
+        # 1:1 Target Exit Simulation for BUY trade
+        target_1to1 = round(entry_price + per_share_risk, 2)
+        target_1to1_hit = False
+        target_1to1_time = "-"
+        pnl_1to1 = 0.0
+        pnl_1to1_pct = 0.0
+
+        for m in range(entry_bar, n_bars):
+            if bars_high[m] >= target_1to1:
+                target_1to1_hit = True
+                target_1to1_time = bars_time[m] if m < len(bars_time) else "1:1 Hit"
+                break
+            if bars_low[m] <= sl_price:
+                # Stopped out before 1:1
+                break
+
+        if target_1to1_hit:
+            pnl_1to1 = round(total_risk_rupees, 2) # Profit = Risk taken in 1:1
+            pnl_1to1_pct = round(risk_pct, 2)
+        elif sl_hit:
+            pnl_1to1 = -round(total_risk_rupees, 2)
+            pnl_1to1_pct = -round(risk_pct, 2)
+        else:
+            # Still open / 3:10 PM exit
+            pnl_1to1 = pnl
+            pnl_1to1_pct = pnl_pct
+
+        res["target_1to1"] = target_1to1
+        res["target_1to1_hit"] = target_1to1_hit
+        res["target_1to1_time"] = target_1to1_time
+        res["pnl_1to1"] = pnl_1to1
+        res["pnl_1to1_pct"] = pnl_1to1_pct
 
         sign_str = "+" if pnl >= 0 else ""
         cls = "pnl-profit" if pnl >= 0 else "pnl-loss"
@@ -1109,23 +1124,38 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         trigger_time = bars_time[entry_bar] if entry_bar < len(bars_time) else "09:20"
         exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
 
-        res["triggered"] = True
-        res["entry_price"] = entry_price
-        res["entry_bar"] = entry_bar
-        res["trigger_time"] = trigger_time
-        res["exit_price"] = exit_price
-        res["exit_reason"] = exit_reason
-        res["exit_time"] = exit_time
-        res["qty"] = qty
-        res["exposure"] = total_exposure
-        res["margin_used"] = margin_used
-        res["capital_used"] = margin_used
-        res["risk_rupees"] = total_risk_rupees
-        res["risk_pct"] = risk_pct
-        res["max_profit_rupees"] = max_profit_rupees
-        res["max_profit_pct"] = max_profit_pct
-        res["pnl"] = pnl
-        res["pnl_pct"] = pnl_pct
+        # 1:1 Target Exit Simulation for SHORT trade
+        target_1to1 = round(entry_price - per_share_risk, 2)
+        target_1to1_hit = False
+        target_1to1_time = "-"
+        pnl_1to1 = 0.0
+        pnl_1to1_pct = 0.0
+
+        for m in range(entry_bar, n_bars):
+            if bars_low[m] <= target_1to1:
+                target_1to1_hit = True
+                target_1to1_time = bars_time[m] if m < len(bars_time) else "1:1 Hit"
+                break
+            if bars_high[m] >= sl_price:
+                # Stopped out before 1:1
+                break
+
+        if target_1to1_hit:
+            pnl_1to1 = round(total_risk_rupees, 2) # Profit = Risk taken in 1:1
+            pnl_1to1_pct = round(risk_pct, 2)
+        elif sl_hit:
+            pnl_1to1 = -round(total_risk_rupees, 2)
+            pnl_1to1_pct = -round(risk_pct, 2)
+        else:
+            # Still open / 3:10 PM exit
+            pnl_1to1 = pnl
+            pnl_1to1_pct = pnl_pct
+
+        res["target_1to1"] = target_1to1
+        res["target_1to1_hit"] = target_1to1_hit
+        res["target_1to1_time"] = target_1to1_time
+        res["pnl_1to1"] = pnl_1to1
+        res["pnl_1to1_pct"] = pnl_1to1_pct
 
         sign_str = "+" if pnl >= 0 else ""
         cls = "pnl-profit" if pnl >= 0 else "pnl-loss"
@@ -1776,6 +1806,11 @@ def record_trades_to_journal(executed_trades, session_date_str):
             "margin_used": t.get("margin_used", 0.0),
             "pnl": t.get("pnl", 0.0),
             "pnl_pct": t.get("pnl_pct", 0.0),
+            "target_1to1": t.get("target_1to1", 0.0),
+            "target_1to1_hit": t.get("target_1to1_hit", False),
+            "target_1to1_time": t.get("target_1to1_time", "-"),
+            "pnl_1to1": t.get("pnl_1to1", 0.0),
+            "pnl_1to1_pct": t.get("pnl_1to1_pct", 0.0),
             "gap_filtered": t.get("gap_filtered", False),
             "erratic_filtered": t.get("erratic_filtered", False),
         }
@@ -1820,11 +1855,31 @@ def build_journal_tab(journal):
     total_loss = abs(sum(t.get("pnl", 0.0) for t in losses))
     profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else (round(total_profit, 2) if total_profit > 0 else 0.0)
 
+    # Calculate cumulative points for equity curve
+    # Sort triggered trades chronologically
+    sorted_for_curve = sorted(trig_trades, key=lambda x: (x.get("date", ""), x.get("trigger_time", "")))
+    curve_labels = ["Start"]
+    curve_normal = [0.0]
+    curve_1to1 = [0.0]
+    cum_norm = 0.0
+    cum_1to1 = 0.0
+
+    for t in sorted_for_curve:
+        cum_norm += t.get("pnl", 0.0)
+        cum_1to1 += t.get("pnl_1to1", 0.0)
+        curve_labels.append(f"{t.get('date', '')} {t['symbol']}")
+        curve_normal.append(round(cum_norm, 1))
+        curve_1to1.append(round(cum_1to1, 1))
+
     total_risk = sum(t.get("risk_rupees", 0.0) for t in trig_trades)
     total_max_profit = sum(t.get("max_profit_rupees", 0.0) for t in trig_trades)
 
     pnl_sign = "+" if total_pnl >= 0 else ""
     pnl_color = "var(--green)" if total_pnl >= 0 else "var(--red)"
+
+    total_1to1_pnl = round(cum_1to1, 2)
+    pnl_1to1_sign = "+" if total_1to1_pnl >= 0 else ""
+    pnl_1to1_color = "var(--green)" if total_1to1_pnl >= 0 else "var(--red)"
 
     # Group trades by date (sorted latest date first)
     dates_desc = sorted(list(set(t.get("date", "") for t in journal if t.get("date"))), reverse=True)
@@ -1861,24 +1916,31 @@ def build_journal_tab(journal):
                 details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
                 risk_cell = f"<span style='color:#ff7799'>&#8377;{fmt(t.get('risk_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--muted)'>({t.get('risk_pct',0)}% risk)</span></span>"
                 max_prof_cell = f"<span style='color:var(--green);font-weight:700'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--green)'>({t.get('max_profit_pct',0)}% peak)</span></span>"
+                sign_1to1 = "+" if t.get("pnl_1to1", 0.0) >= 0 else ""
+                cls_1to1 = "pos" if t.get("pnl_1to1", 0.0) >= 0 else "neg"
+                hit_note = f"<span style='font-size:9.5px;color:var(--green)'>&#10004; Hit @ {t.get('target_1to1_time')}</span>" if t.get("target_1to1_hit") else ("<span style='font-size:9.5px;color:var(--red)'>&#10006; Stopped Out</span>" if t.get("exit_reason") == "SL Hit" else "<span style='font-size:9.5px;color:var(--muted)'>Open</span>")
+                pnl_1to1_cell = f'<span class="pc {cls_1to1}">{sign_1to1}&#8377;{fmt(t.get("pnl_1to1",0), 1)} ({sign_1to1}{fmt(t.get("pnl_1to1_pct",0), 2)}%)</span><br>{hit_note}'
             elif t.get("gap_filtered"):
                 pnl_cell = '<span class="neu">&#8377;0.00</span>'
                 status_txt = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>'
                 details = "<span style='color:var(--muted)'>Disqualified by opening gap alignment</span>"
                 risk_cell = "-"
                 max_prof_cell = "-"
+                pnl_1to1_cell = '<span class="neu">&#8377;0.00</span>'
             elif t.get("erratic_filtered"):
                 pnl_cell = '<span class="neu">&#8377;0.00</span>'
                 status_txt = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>'
                 details = "<span style='color:var(--muted)'>1st 5-min candle range &gt; 2.0%</span>"
                 risk_cell = "-"
                 max_prof_cell = "-"
+                pnl_1to1_cell = '<span class="neu">&#8377;0.00</span>'
             else:
                 pnl_cell = '<span class="neu">&#8377;0.00</span>'
                 status_txt = '<span class="neu">&#9203; Not Triggered</span>'
                 details = "<span style='color:var(--muted)'>Price never broke 1st 5-min breakout level</span>"
                 risk_cell = "-"
                 max_prof_cell = "-"
+                pnl_1to1_cell = '<span class="neu">&#8377;0.00</span>'
 
             tbody_html += f"""<tr class="{row_class}">
               <td><span style="color:var(--muted)">#{idx}</span> <b>{t.get('date')}</b></td>
@@ -1888,6 +1950,7 @@ def build_journal_tab(journal):
               <td>{details}</td>
               <td>{risk_cell}</td>
               <td>{max_prof_cell}</td>
+              <td>{pnl_1to1_cell}</td>
               <td>{pnl_cell}</td>
             </tr>"""
 
@@ -1895,9 +1958,14 @@ def build_journal_tab(journal):
     <!-- JOURNAL HERO METRICS -->
     <div class="pnl-hero">
       <div class="pnl-kpi">
-        <div class="pnl-kpi-lbl">Cumulative Journal P&amp;L</div>
+        <div class="pnl-kpi-lbl">Cumulative Normal P&amp;L (3:10 PM)</div>
         <div class="pnl-kpi-val" style="color:{pnl_color}">{pnl_sign}&#8377;{fmt(total_pnl, 1)}</div>
         <div class="pnl-kpi-sub">Total Triggered Trades: <b>{total_trades}</b></div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Cumulative 1:1 Target P&amp;L</div>
+        <div class="pnl-kpi-val" style="color:{pnl_1to1_color}">{pnl_1to1_sign}&#8377;{fmt(total_1to1_pnl, 1)}</div>
+        <div class="pnl-kpi-sub">Fixed 1:1 Risk-Reward Strategy</div>
       </div>
       <div class="pnl-kpi">
         <div class="pnl-kpi-lbl">Win Rate %</div>
@@ -1905,14 +1973,23 @@ def build_journal_tab(journal):
         <div class="pnl-kpi-sub"><span style="color:var(--green)">{len(wins)} Wins</span> &middot; <span style="color:var(--red)">{len(losses)} Losses</span></div>
       </div>
       <div class="pnl-kpi">
-        <div class="pnl-kpi-lbl">Profit Factor</div>
-        <div class="pnl-kpi-val" style="color:#fff">{profit_factor}</div>
-        <div class="pnl-kpi-sub">Gross Profit: &#8377;{fmt(total_profit, 0)} / Loss: &#8377;{fmt(total_loss, 0)}</div>
-      </div>
-      <div class="pnl-kpi">
         <div class="pnl-kpi-lbl">Peak Profit Before Exit</div>
         <div class="pnl-kpi-val" style="color:var(--green)">+&#8377;{fmt(total_max_profit, 0)}</div>
-        <div class="pnl-kpi-sub">Total Capital at Risk: &#8377;{fmt(total_risk, 0)}</div>
+        <div class="pnl-kpi-sub">Profit Factor: <b>{profit_factor}</b></div>
+      </div>
+    </div>
+
+    <!-- DUAL EQUITY CURVE CHART (NORMAL P&L VS 1:1 P&L) -->
+    <div class="sec" style="margin:0 10px 15px 10px;padding:14px">
+      <div class="sh" style="background:#131824;margin:-14px -14px 12px -14px;border-bottom:1px solid var(--border)">
+        <div>&#128200; Comparative Equity Curve: Normal P&amp;L vs 1:1 Target Exit</div>
+        <div style="font-size:10px;display:flex;gap:12px">
+          <span style="color:var(--blue);font-weight:700">&mdash; Normal Intraday P&amp;L (3:10 PM)</span>
+          <span style="color:var(--green);font-weight:700">&mdash; 1:1 Target Exit P&amp;L</span>
+        </div>
+      </div>
+      <div style="width:100%;height:220px;position:relative">
+        <canvas id="equityCurveChart"></canvas>
       </div>
     </div>
 
@@ -1936,16 +2013,19 @@ def build_journal_tab(journal):
               <th>Symbol</th>
               <th>Side</th>
               <th>Status</th>
-              <th>Execution Details (Entry &rarr; Exit @ 3:10 PM)</th>
+              <th>Execution Details (Entry &rarr; Exit)</th>
               <th>Risk Taken (&#8377; &amp; %)</th>
-              <th>Max Profit Reached (&#8377; &amp; %)</th>
-              <th>Final P&amp;L</th>
+              <th>Max Profit Reached</th>
+              <th>1:1 Target Exit P&amp;L</th>
+              <th>Normal P&amp;L (3:10 PM)</th>
             </tr>
           </thead>
           <tbody>{tbody_html}</tbody>
         </table>
       </div>
     </div>
+    <!-- Load Chart.js for responsive multi-series equity curve -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
     function filterJournalRows(onlyExec) {{
       var rows = document.querySelectorAll('.journal-row-unexec');
@@ -1953,10 +2033,81 @@ def build_journal_tab(journal):
         r.style.display = onlyExec ? 'none' : '';
       }});
     }}
-    // Apply default filter on load
+
+    function initEquityChart() {{
+      var ctx = document.getElementById('equityCurveChart');
+      if (!ctx) return;
+      var labels = {curve_labels};
+      var dataNormal = {curve_normal};
+      var data1to1 = {curve_1to1};
+
+      new Chart(ctx, {{
+        type: 'line',
+        data: {{
+          labels: labels,
+          datasets: [
+            {{
+              label: 'Normal P&L (3:10 PM Exit)',
+              data: dataNormal,
+              borderColor: '#3d9bff',
+              backgroundColor: 'rgba(61, 155, 255, 0.08)',
+              borderWidth: 2.2,
+              pointRadius: 4,
+              pointBackgroundColor: '#3d9bff',
+              tension: 0.25,
+              fill: true
+            }},
+            {{
+              label: '1:1 Target Exit P&L',
+              data: data1to1,
+              borderColor: '#00c47a',
+              backgroundColor: 'rgba(0, 196, 122, 0.05)',
+              borderWidth: 2.2,
+              borderDash: [5, 4],
+              pointRadius: 4,
+              pointBackgroundColor: '#00c47a',
+              tension: 0.25,
+              fill: true
+            }}
+          ]
+        }},
+        options: {{
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{
+              mode: 'index',
+              intersect: false,
+              callbacks: {{
+                label: function(c) {{
+                  return c.dataset.label + ': Rs.' + c.parsed.y.toLocaleString('en-IN');
+                }}
+              }}
+            }}
+          }},
+          scales: {{
+            x: {{
+              grid: {{ color: 'rgba(255, 255, 255, 0.05)' }},
+              ticks: {{ color: '#8892b0', font: {{ size: 10 }} }}
+            }},
+            y: {{
+              grid: {{ color: 'rgba(255, 255, 255, 0.05)' }},
+              ticks: {{
+                color: '#8892b0',
+                font: {{ size: 10 }},
+                callback: function(v) {{ return 'Rs.' + v; }}
+              }}
+            }}
+          }}
+        }}
+      }});
+    }}
+
     document.addEventListener('DOMContentLoaded', function() {{
       var cb = document.getElementById('journal-exec-filter');
       if (cb) filterJournalRows(cb.checked);
+      initEquityChart();
     }});
     </script>
     """
