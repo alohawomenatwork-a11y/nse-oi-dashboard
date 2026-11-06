@@ -703,6 +703,11 @@ function openTab(tabId, btn) {
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById(tabId).classList.add('active');
   btn.classList.add('active');
+  if (tabId === 'journal-tab') {
+    if (typeof initEquityChart === 'function') initEquityChart();
+    var cb = document.getElementById('journal-exec-filter');
+    if (cb && typeof filterJournalRows === 'function') filterJournalRows(cb.checked);
+  }
 }
 
 // ── LIVE P&L REFRESH ENGINE ──────────────────────────────────────────────────
@@ -2066,14 +2071,16 @@ def build_journal_tab(journal):
       }});
     }}
 
+    var _equityChartInstance = null;
     function initEquityChart() {{
       var ctx = document.getElementById('equityCurveChart');
       if (!ctx) return;
+      if (_equityChartInstance) return; // Already initialized
       var labels = {curve_labels};
       var dataNormal = {curve_normal};
       var data1to1 = {curve_1to1};
 
-      new Chart(ctx, {{
+      _equityChartInstance = new Chart(ctx, {{
         type: 'line',
         data: {{
           labels: labels,
