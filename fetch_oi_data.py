@@ -1057,6 +1057,22 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
             pnl_1to1 = pnl
             pnl_1to1_pct = pnl_pct
 
+        res["triggered"] = True
+        res["entry_price"] = entry_price
+        res["trigger_time"] = trigger_time
+        res["exit_price"] = exit_price
+        res["exit_reason"] = exit_reason
+        res["exit_time"] = exit_time
+        res["qty"] = qty
+        res["exposure"] = total_exposure
+        res["margin_used"] = margin_used
+        res["capital_used"] = margin_used
+        res["risk_rupees"] = total_risk_rupees
+        res["risk_pct"] = risk_pct
+        res["max_profit_rupees"] = max_profit_rupees
+        res["max_profit_pct"] = max_profit_pct
+        res["pnl"] = pnl
+        res["pnl_pct"] = pnl_pct
         res["target_1to1"] = target_1to1
         res["target_1to1_hit"] = target_1to1_hit
         res["target_1to1_time"] = target_1to1_time
@@ -1151,6 +1167,22 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
             pnl_1to1 = pnl
             pnl_1to1_pct = pnl_pct
 
+        res["triggered"] = True
+        res["entry_price"] = entry_price
+        res["trigger_time"] = trigger_time
+        res["exit_price"] = exit_price
+        res["exit_reason"] = exit_reason
+        res["exit_time"] = exit_time
+        res["qty"] = qty
+        res["exposure"] = total_exposure
+        res["margin_used"] = margin_used
+        res["capital_used"] = margin_used
+        res["risk_rupees"] = total_risk_rupees
+        res["risk_pct"] = risk_pct
+        res["max_profit_rupees"] = max_profit_rupees
+        res["max_profit_pct"] = max_profit_pct
+        res["pnl"] = pnl
+        res["pnl_pct"] = pnl_pct
         res["target_1to1"] = target_1to1
         res["target_1to1_hit"] = target_1to1_hit
         res["target_1to1_time"] = target_1to1_time

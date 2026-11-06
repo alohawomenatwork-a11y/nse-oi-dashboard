@@ -211,19 +211,6 @@
       "deliv_pct": 41.19
     },
     {
-      "symbol": "SIEMENS",
-      "last_close": 3509.0,
-      "open": 3506.6,
-      "high": 3506.6,
-      "low": 3406.6,
-      "close": 3432.0,
-      "price_chg": -2.19,
-      "oi": 3602900,
-      "oi_chg": 217175,
-      "oi_chg_pct": 6.41,
-      "deliv_pct": 36.13
-    },
-    {
       "symbol": "ABB",
       "last_close": 6750.0,
       "open": 6690.0,
@@ -235,6 +222,19 @@
       "oi_chg": 120125,
       "oi_chg_pct": 6.41,
       "deliv_pct": 43.01
+    },
+    {
+      "symbol": "SIEMENS",
+      "last_close": 3509.0,
+      "open": 3506.6,
+      "high": 3506.6,
+      "low": 3406.6,
+      "close": 3432.0,
+      "price_chg": -2.19,
+      "oi": 3602900,
+      "oi_chg": 217175,
+      "oi_chg_pct": 6.41,
+      "deliv_pct": 36.13
     },
     {
       "symbol": "PREMIERENE",
@@ -514,17 +514,17 @@
       "deliv_pct": 55.3
     },
     {
-      "symbol": "BHARTIARTL",
-      "last_close": 2067.6,
-      "open": 2084.0,
-      "high": 2084.0,
-      "low": 2048.0,
-      "close": 2056.9,
-      "price_chg": -0.52,
-      "oi": 50567550,
-      "oi_chg": -1148550,
+      "symbol": "GLENMARK",
+      "last_close": 2504.7,
+      "open": 2538.0,
+      "high": 2542.2,
+      "low": 2456.9,
+      "close": 2481.8,
+      "price_chg": -0.91,
+      "oi": 10460625,
+      "oi_chg": -237750,
       "oi_chg_pct": -2.22,
-      "deliv_pct": 59.46
+      "deliv_pct": 41.07
     }
   ],
   "as_of": "05 Nov 2026"
