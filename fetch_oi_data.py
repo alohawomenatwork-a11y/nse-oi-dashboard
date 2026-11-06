@@ -632,6 +632,7 @@ td:first-child{text-align:left;font-weight:700;color:#fff;font-size:11.5px}
   <button class="tab-btn active" onclick="openTab('daily-tab', this)">&#128202; Daily Dashboard &amp; Picks</button>
   <button class="tab-btn" onclick="openTab('pnl-tab', this)">&#128176; Capital &amp; Day's P&amp;L Tracker</button>
   <button class="tab-btn" onclick="openTab('historic-tab', this)">&#128197; 1-Week Historic Trend &amp; Setup</button>
+  <button class="tab-btn" onclick="openTab('journal-tab', this)">&#128220; Historic Trade Journal (Database)</button>
 </div>
 
 <!-- TAB 1: DAILY DASHBOARD (100% UNCHANGED CONTENT) -->
@@ -683,6 +684,11 @@ __PNL_TAB_CONTENT__
 <!-- TAB 3: HISTORIC 1-WEEK ANALYSIS -->
 <div id="historic-tab" class="tab-content">
 __HISTORIC_CONTENT__
+</div>
+
+<!-- TAB 4: HISTORIC TRADE JOURNAL (DATABASE) -->
+<div id="journal-tab" class="tab-content">
+__JOURNAL_CONTENT__
 </div>
 
 <div class="foot">
@@ -902,6 +908,7 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
     bars_high  = bar_data["high"]
     bars_low   = bar_data["low"]
     bars_close = bar_data["close"]
+    bars_time  = bar_data.get("times", [])
     n_bars     = len(bars_open)
 
     if n_bars < 2:
@@ -993,7 +1000,14 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         exit_price = ltp
         exit_reason = "LTP"
 
+        # Track max favorable price (peak profit) reached after entry before exit
+        max_favorable_price = entry_price
+
         for k in range(entry_bar, n_bars):
+            # Check maximum profit potential reached so far
+            if bars_high[k] > max_favorable_price:
+                max_favorable_price = bars_high[k]
+
             if bars_low[k] <= sl_price:
                 sl_hit = True
                 exit_price = sl_price
@@ -1007,15 +1021,26 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         pnl = round((exit_price - entry_price) * qty, 2)
         pnl_pct = round((pnl / margin_used) * 100, 2)
 
+        # Risk taken & Max Profit calculations
+        per_share_risk = max(round(entry_price - sl_price, 2), 0.05)
+        total_risk_rupees = round(per_share_risk * qty, 2)
+        max_profit_rupees = round(max(max_favorable_price - entry_price, 0.0) * qty, 2)
+        trigger_time = bars_time[entry_bar] if entry_bar < len(bars_time) else "09:20"
+        exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
+
         res["triggered"] = True
         res["entry_price"] = entry_price
         res["entry_bar"] = entry_bar
+        res["trigger_time"] = trigger_time
         res["exit_price"] = exit_price
         res["exit_reason"] = exit_reason
+        res["exit_time"] = exit_time
         res["qty"] = qty
         res["exposure"] = total_exposure
         res["margin_used"] = margin_used
         res["capital_used"] = margin_used
+        res["risk_rupees"] = total_risk_rupees
+        res["max_profit_rupees"] = max_profit_rupees
         res["pnl"] = pnl
         res["pnl_pct"] = pnl_pct
 
@@ -1050,7 +1075,14 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         exit_price = ltp
         exit_reason = "LTP"
 
+        # Track max favorable price (lowest price drop = peak profit) reached after entry before exit
+        min_favorable_price = entry_price
+
         for k in range(entry_bar, n_bars):
+            # Check maximum profit potential reached so far for SHORT trade
+            if bars_low[k] < min_favorable_price:
+                min_favorable_price = bars_low[k]
+
             if bars_high[k] >= sl_price:
                 sl_hit = True
                 exit_price = sl_price
@@ -1064,15 +1096,26 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         pnl = round((entry_price - exit_price) * qty, 2)
         pnl_pct = round((pnl / margin_used) * 100, 2)
 
+        # Risk taken & Max Profit calculations
+        per_share_risk = max(round(sl_price - entry_price, 2), 0.05)
+        total_risk_rupees = round(per_share_risk * qty, 2)
+        max_profit_rupees = round(max(entry_price - min_favorable_price, 0.0) * qty, 2)
+        trigger_time = bars_time[entry_bar] if entry_bar < len(bars_time) else "09:20"
+        exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
+
         res["triggered"] = True
         res["entry_price"] = entry_price
         res["entry_bar"] = entry_bar
+        res["trigger_time"] = trigger_time
         res["exit_price"] = exit_price
         res["exit_reason"] = exit_reason
+        res["exit_time"] = exit_time
         res["qty"] = qty
         res["exposure"] = total_exposure
         res["margin_used"] = margin_used
         res["capital_used"] = margin_used
+        res["risk_rupees"] = total_risk_rupees
+        res["max_profit_rupees"] = max_profit_rupees
         res["pnl"] = pnl
         res["pnl_pct"] = pnl_pct
 
@@ -1115,6 +1158,7 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
                         "high":  [b["high"] for b in filtered],
                         "low":   [b["low"] for b in filtered],
                         "close": [b["close"] for b in filtered],
+                        "times": [datetime.fromtimestamp(b["time"]).strftime("%H:%M") for b in filtered],
                     }
                     continue
         except Exception as e:
@@ -1148,6 +1192,7 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
                     "high":  [round(float(x), 2) for x in sub["High"]],
                     "low":   [round(float(x), 2) for x in sub["Low"]],
                     "close": [round(float(x), 2) for x in sub["Close"]],
+                    "times": [idx.strftime("%H:%M") for idx in sub.index],
                 }
         except Exception:
             pass
@@ -1674,6 +1719,196 @@ def build_historic_analysis(session, ref_date):
     """
     return html
 
+# ─── HISTORIC TRADE JOURNAL & DATABASE ──────────────────────────────────────
+JOURNAL_DB_FILE = os.path.join(OUT_DIR, "trade_history.json")
+
+def load_trade_journal():
+    if os.path.exists(JOURNAL_DB_FILE):
+        try:
+            with open(JOURNAL_DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_trade_journal(journal):
+    try:
+        with open(JOURNAL_DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(journal, f, indent=2)
+    except Exception as e:
+        print(f"[warn] Could not save trade journal: {e}")
+
+def record_trades_to_journal(executed_trades, session_date_str):
+    """
+    Appends or updates the trades executed during session_date_str into trade_history.json.
+    Ensures no duplicate entries for the same date and symbol.
+    """
+    journal = load_trade_journal()
+    existing_keys = {f"{t.get('date')}_{t.get('symbol')}" for t in journal}
+
+    updated = False
+    for t in executed_trades:
+        key = f"{session_date_str}_{t.get('symbol')}"
+        record = {
+            "date": session_date_str,
+            "symbol": t["symbol"],
+            "side": t["side"],
+            "triggered": t["triggered"],
+            "trigger_time": t.get("trigger_time", "-"),
+            "entry_price": t.get("entry_price", 0.0),
+            "sl_price": t.get("sl_price", 0.0),
+            "qty": t.get("qty", 0),
+            "risk_rupees": t.get("risk_rupees", 0.0),
+            "max_profit_rupees": t.get("max_profit_rupees", 0.0),
+            "exit_price": t.get("exit_price", 0.0),
+            "exit_time": t.get("exit_time", "15:10"),
+            "exit_reason": t.get("exit_reason", "-"),
+            "margin_used": t.get("margin_used", 0.0),
+            "pnl": t.get("pnl", 0.0),
+            "pnl_pct": t.get("pnl_pct", 0.0),
+            "gap_filtered": t.get("gap_filtered", False),
+            "erratic_filtered": t.get("erratic_filtered", False),
+        }
+
+        # Update if exists, or append
+        replaced = False
+        for idx, item in enumerate(journal):
+            if f"{item.get('date')}_{item.get('symbol')}" == key:
+                journal[idx] = record
+                replaced = True
+                updated = True
+                break
+        if not replaced:
+            journal.append(record)
+            updated = True
+
+    if updated:
+        save_trade_journal(journal)
+    return journal
+
+def build_journal_tab(journal):
+    """
+    Renders Tab 4: Comprehensive Trade Journal & Cumulative Performance Metrics.
+    """
+    if not journal:
+        return """<div class="sec" style="padding:25px;margin:12px;text-align:center">
+          <h3 style="color:#fff;margin-bottom:8px">&#128220; No Historic Trades Recorded Yet</h3>
+          <p style="color:var(--muted);font-size:11px">The trade journal automatically builds up as each day's trades complete at 3:10 PM.</p>
+        </div>"""
+
+    # Filter triggered trades for performance stats
+    trig_trades = [t for t in journal if t.get("triggered")]
+    total_trades = len(trig_trades)
+    total_pnl = round(sum(t.get("pnl", 0.0) for t in trig_trades), 2)
+    wins = [t for t in trig_trades if t.get("pnl", 0.0) > 0]
+    losses = [t for t in trig_trades if t.get("pnl", 0.0) < 0]
+    win_rate = round((len(wins) / total_trades * 100), 1) if total_trades > 0 else 0.0
+    
+    total_profit = sum(t.get("pnl", 0.0) for t in wins)
+    total_loss = abs(sum(t.get("pnl", 0.0) for t in losses))
+    profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else (round(total_profit, 2) if total_profit > 0 else 0.0)
+
+    total_risk = sum(t.get("risk_rupees", 0.0) for t in trig_trades)
+    total_max_profit = sum(t.get("max_profit_rupees", 0.0) for t in trig_trades)
+
+    pnl_sign = "+" if total_pnl >= 0 else ""
+    pnl_color = "var(--green)" if total_pnl >= 0 else "var(--red)"
+
+    # Build rows (sorted latest first)
+    sorted_journal = sorted(journal, key=lambda x: (x.get("date", ""), x.get("trigger_time", "")), reverse=True)
+    rows_html = ""
+    for idx, t in enumerate(sorted_journal, 1):
+        side_badge = f'<span class="rank-badge rank-buy">BUY</span>' if t["side"] == "BUY" else f'<span class="rank-badge rank-sell">SELL</span>'
+        
+        if t["triggered"]:
+            sign = "+" if t["pnl"] >= 0 else ""
+            pnl_cls = "pos" if t["pnl"] >= 0 else "neg"
+            pnl_cell = f'<span class="pc {pnl_cls}">{sign}&#8377;{fmt(t["pnl"], 1)} ({sign}{fmt(t["pnl_pct"], 2)}%)</span>'
+            status_txt = f'<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>' if t.get("exit_reason") == "SL Hit" else '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>'
+            details = f"Trigger @ <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
+            risk_cell = f"&#8377;{fmt(t.get('risk_rupees',0),1)}"
+            max_prof_cell = f"<b style='color:var(--green)'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}</b>"
+        elif t.get("gap_filtered"):
+            pnl_cell = '<span class="neu">&#8377;0.00</span>'
+            status_txt = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>'
+            details = "<span style='color:var(--muted)'>Disqualified by opening gap alignment</span>"
+            risk_cell = "-"
+            max_prof_cell = "-"
+        elif t.get("erratic_filtered"):
+            pnl_cell = '<span class="neu">&#8377;0.00</span>'
+            status_txt = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>'
+            details = "<span style='color:var(--muted)'>1st 5-min candle range &gt; 2.0%</span>"
+            risk_cell = "-"
+            max_prof_cell = "-"
+        else:
+            pnl_cell = '<span class="neu">&#8377;0.00</span>'
+            status_txt = '<span class="neu">&#9203; Not Triggered</span>'
+            details = "<span style='color:var(--muted)'>Price never broke 1st 5-min breakout level</span>"
+            risk_cell = "-"
+            max_prof_cell = "-"
+
+        rows_html += f"""<tr>
+          <td><span style="color:var(--muted)">#{idx}</span> <b>{t.get('date')}</b></td>
+          <td><b>{t['symbol']}</b></td>
+          <td>{side_badge}</td>
+          <td>{status_txt}</td>
+          <td>{details}</td>
+          <td style="color:#ff7799">{risk_cell}</td>
+          <td>{max_prof_cell}</td>
+          <td>{pnl_cell}</td>
+        </tr>"""
+
+    return f"""
+    <!-- JOURNAL HERO METRICS -->
+    <div class="pnl-hero">
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Cumulative Journal P&amp;L</div>
+        <div class="pnl-kpi-val" style="color:{pnl_color}">{pnl_sign}&#8377;{fmt(total_pnl, 1)}</div>
+        <div class="pnl-kpi-sub">Total Triggered Trades: <b>{total_trades}</b></div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Win Rate %</div>
+        <div class="pnl-kpi-val" style="color:var(--blue)">{win_rate}%</div>
+        <div class="pnl-kpi-sub"><span style="color:var(--green)">{len(wins)} Wins</span> &middot; <span style="color:var(--red)">{len(losses)} Losses</span></div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Profit Factor</div>
+        <div class="pnl-kpi-val" style="color:#fff">{profit_factor}</div>
+        <div class="pnl-kpi-sub">Gross Profit: &#8377;{fmt(total_profit, 0)} / Loss: &#8377;{fmt(total_loss, 0)}</div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Peak Profit Before Exit</div>
+        <div class="pnl-kpi-val" style="color:var(--green)">+&#8377;{fmt(total_max_profit, 0)}</div>
+        <div class="pnl-kpi-sub">Total Capital at Risk: &#8377;{fmt(total_risk, 0)}</div>
+      </div>
+    </div>
+
+    <!-- TABLE OF ALL HISTORIC TRADES -->
+    <div class="sec" style="margin:0 10px 15px 10px">
+      <div class="sh" style="background:#131824">
+        <div>&#128220; Complete Trade Execution History &amp; Risk/Reward Journal</div>
+        <span class="badge" style="background:rgba(0,196,122,0.15);color:var(--green)">Permanent Audit Log</span>
+      </div>
+      <div class="tw">
+        <table class="rec-tbl pnl-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Status</th>
+              <th>Execution Details (Entry &rarr; Exit @ 3:10 PM)</th>
+              <th>Risk Taken (&#8377;)</th>
+              <th>Max Profit Reached</th>
+              <th>Final P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+      </div>
+    </div>
+    """
+
 def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bhavcopy (Real OI)"):
     sections = (
         build_section("fl", "&#129001;", "Fresh Longs",    "Price &uarr; &nbsp; OI &uarr;", data["fresh_longs"],    "rg") +
@@ -1684,6 +1919,11 @@ def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bh
     trade_recs, executed_trades = build_recommendations(data, ref_date=ref_date)
     rules_panel = build_rules_panel()
     pnl_tab_content = build_pnl_tracker_tab(executed_trades, capital_per_trade=10000)
+
+    # Record today's trades to the database and build Tab 4
+    exec_session_date = next_trading_day(ref_date).strftime("%Y-%m-%d") if ref_date else datetime.now().strftime("%Y-%m-%d")
+    journal = record_trades_to_journal(executed_trades, exec_session_date)
+    journal_content = build_journal_tab(journal)
 
     # Generate Historic 1-Week Analysis Tab
     if session and ref_date:
@@ -1698,7 +1938,8 @@ def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bh
             .replace("__TRADE_RECOMMENDATIONS__", trade_recs)
             .replace("__RULES_PANEL__", rules_panel)
             .replace("__PNL_TAB_CONTENT__", pnl_tab_content)
-            .replace("__HISTORIC_CONTENT__", historic_content))
+            .replace("__HISTORIC_CONTENT__", historic_content)
+            .replace("__JOURNAL_CONTENT__", journal_content))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"[DONE] Dashboard -> {out_path}")
