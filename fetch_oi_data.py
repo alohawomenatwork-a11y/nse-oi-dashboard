@@ -1024,7 +1024,9 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         # Risk taken & Max Profit calculations
         per_share_risk = max(round(entry_price - sl_price, 2), 0.05)
         total_risk_rupees = round(per_share_risk * qty, 2)
+        risk_pct = round((total_risk_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
         max_profit_rupees = round(max(max_favorable_price - entry_price, 0.0) * qty, 2)
+        max_profit_pct = round((max_profit_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
         trigger_time = bars_time[entry_bar] if entry_bar < len(bars_time) else "09:20"
         exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
 
@@ -1040,7 +1042,9 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         res["margin_used"] = margin_used
         res["capital_used"] = margin_used
         res["risk_rupees"] = total_risk_rupees
+        res["risk_pct"] = risk_pct
         res["max_profit_rupees"] = max_profit_rupees
+        res["max_profit_pct"] = max_profit_pct
         res["pnl"] = pnl
         res["pnl_pct"] = pnl_pct
 
@@ -1099,7 +1103,9 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         # Risk taken & Max Profit calculations
         per_share_risk = max(round(sl_price - entry_price, 2), 0.05)
         total_risk_rupees = round(per_share_risk * qty, 2)
+        risk_pct = round((total_risk_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
         max_profit_rupees = round(max(entry_price - min_favorable_price, 0.0) * qty, 2)
+        max_profit_pct = round((max_profit_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
         trigger_time = bars_time[entry_bar] if entry_bar < len(bars_time) else "09:20"
         exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
 
@@ -1115,7 +1121,9 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         res["margin_used"] = margin_used
         res["capital_used"] = margin_used
         res["risk_rupees"] = total_risk_rupees
+        res["risk_pct"] = risk_pct
         res["max_profit_rupees"] = max_profit_rupees
+        res["max_profit_pct"] = max_profit_pct
         res["pnl"] = pnl
         res["pnl_pct"] = pnl_pct
 
@@ -1759,7 +1767,9 @@ def record_trades_to_journal(executed_trades, session_date_str):
             "sl_price": t.get("sl_price", 0.0),
             "qty": t.get("qty", 0),
             "risk_rupees": t.get("risk_rupees", 0.0),
+            "risk_pct": t.get("risk_pct", 0.0),
             "max_profit_rupees": t.get("max_profit_rupees", 0.0),
+            "max_profit_pct": t.get("max_profit_pct", 0.0),
             "exit_price": t.get("exit_price", 0.0),
             "exit_time": t.get("exit_time", "15:10"),
             "exit_reason": t.get("exit_reason", "-"),
@@ -1789,6 +1799,8 @@ def record_trades_to_journal(executed_trades, session_date_str):
 def build_journal_tab(journal):
     """
     Renders Tab 4: Comprehensive Trade Journal & Cumulative Performance Metrics.
+    Maintains executed trades grouped session by session with daily breaks and P&L totals,
+    with an interactive filter to toggle between All Candidates vs Only Executed Trades.
     """
     if not journal:
         return """<div class="sec" style="padding:25px;margin:12px;text-align:center">
@@ -1803,7 +1815,7 @@ def build_journal_tab(journal):
     wins = [t for t in trig_trades if t.get("pnl", 0.0) > 0]
     losses = [t for t in trig_trades if t.get("pnl", 0.0) < 0]
     win_rate = round((len(wins) / total_trades * 100), 1) if total_trades > 0 else 0.0
-    
+
     total_profit = sum(t.get("pnl", 0.0) for t in wins)
     total_loss = abs(sum(t.get("pnl", 0.0) for t in losses))
     profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else (round(total_profit, 2) if total_profit > 0 else 0.0)
@@ -1814,49 +1826,70 @@ def build_journal_tab(journal):
     pnl_sign = "+" if total_pnl >= 0 else ""
     pnl_color = "var(--green)" if total_pnl >= 0 else "var(--red)"
 
-    # Build rows (sorted latest first)
-    sorted_journal = sorted(journal, key=lambda x: (x.get("date", ""), x.get("trigger_time", "")), reverse=True)
-    rows_html = ""
-    for idx, t in enumerate(sorted_journal, 1):
-        side_badge = f'<span class="rank-badge rank-buy">BUY</span>' if t["side"] == "BUY" else f'<span class="rank-badge rank-sell">SELL</span>'
-        
-        if t["triggered"]:
-            sign = "+" if t["pnl"] >= 0 else ""
-            pnl_cls = "pos" if t["pnl"] >= 0 else "neg"
-            pnl_cell = f'<span class="pc {pnl_cls}">{sign}&#8377;{fmt(t["pnl"], 1)} ({sign}{fmt(t["pnl_pct"], 2)}%)</span>'
-            status_txt = f'<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>' if t.get("exit_reason") == "SL Hit" else '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>'
-            details = f"Trigger @ <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
-            risk_cell = f"&#8377;{fmt(t.get('risk_rupees',0),1)}"
-            max_prof_cell = f"<b style='color:var(--green)'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}</b>"
-        elif t.get("gap_filtered"):
-            pnl_cell = '<span class="neu">&#8377;0.00</span>'
-            status_txt = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>'
-            details = "<span style='color:var(--muted)'>Disqualified by opening gap alignment</span>"
-            risk_cell = "-"
-            max_prof_cell = "-"
-        elif t.get("erratic_filtered"):
-            pnl_cell = '<span class="neu">&#8377;0.00</span>'
-            status_txt = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>'
-            details = "<span style='color:var(--muted)'>1st 5-min candle range &gt; 2.0%</span>"
-            risk_cell = "-"
-            max_prof_cell = "-"
-        else:
-            pnl_cell = '<span class="neu">&#8377;0.00</span>'
-            status_txt = '<span class="neu">&#9203; Not Triggered</span>'
-            details = "<span style='color:var(--muted)'>Price never broke 1st 5-min breakout level</span>"
-            risk_cell = "-"
-            max_prof_cell = "-"
+    # Group trades by date (sorted latest date first)
+    dates_desc = sorted(list(set(t.get("date", "") for t in journal if t.get("date"))), reverse=True)
 
-        rows_html += f"""<tr>
-          <td><span style="color:var(--muted)">#{idx}</span> <b>{t.get('date')}</b></td>
-          <td><b>{t['symbol']}</b></td>
-          <td>{side_badge}</td>
-          <td>{status_txt}</td>
-          <td>{details}</td>
-          <td style="color:#ff7799">{risk_cell}</td>
-          <td>{max_prof_cell}</td>
-          <td>{pnl_cell}</td>
+    tbody_html = ""
+    for d in dates_desc:
+        day_trades = [t for t in journal if t.get("date") == d]
+        day_trig = [t for t in day_trades if t.get("triggered")]
+        day_pnl = round(sum(t.get("pnl", 0.0) for t in day_trig), 2)
+        day_sign = "+" if day_pnl >= 0 else ""
+        day_color = "var(--green)" if day_pnl >= 0 else ("var(--red)" if day_pnl < 0 else "var(--muted)")
+        day_roi = round(sum(t.get("pnl", 0.0) for t in day_trig) / max(sum(t.get("margin_used", 0.0) for t in day_trig), 1) * 100, 2)
+
+        # Day Header Break / Separator Row
+        tbody_html += f"""<tr class="journal-day-header" style="background:#0f1522;border-top:2px solid var(--blue);border-bottom:1px solid #28324a">
+          <td colspan="8" style="padding:10px 14px;font-size:12px;font-weight:700">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <span style="color:#fff">&#128197; Trading Session: <span style="color:var(--blue)">{d}</span> ({len(day_trig)} / {len(day_trades)} Executed)</span>
+              <span style="font-size:12px">Day's Net P&amp;L: <b style="color:{day_color};font-size:13px">{day_sign}&#8377;{fmt(day_pnl, 1)}</b> ({day_sign}{day_roi}% 5X ROI)</span>
+            </div>
+          </td>
         </tr>"""
+
+        # Trades for this date
+        for idx, t in enumerate(day_trades, 1):
+            side_badge = f'<span class="rank-badge rank-buy">BUY</span>' if t["side"] == "BUY" else f'<span class="rank-badge rank-sell">SELL</span>'
+            row_class = "journal-row-exec" if t["triggered"] else "journal-row-unexec"
+
+            if t["triggered"]:
+                sign = "+" if t["pnl"] >= 0 else ""
+                pnl_cls = "pos" if t["pnl"] >= 0 else "neg"
+                pnl_cell = f'<span class="pc {pnl_cls}">{sign}&#8377;{fmt(t["pnl"], 1)} ({sign}{fmt(t["pnl_pct"], 2)}%)</span>'
+                status_txt = f'<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>' if t.get("exit_reason") == "SL Hit" else '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>'
+                details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
+                risk_cell = f"<span style='color:#ff7799'>&#8377;{fmt(t.get('risk_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--muted)'>({t.get('risk_pct',0)}% risk)</span></span>"
+                max_prof_cell = f"<span style='color:var(--green);font-weight:700'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--green)'>({t.get('max_profit_pct',0)}% peak)</span></span>"
+            elif t.get("gap_filtered"):
+                pnl_cell = '<span class="neu">&#8377;0.00</span>'
+                status_txt = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>'
+                details = "<span style='color:var(--muted)'>Disqualified by opening gap alignment</span>"
+                risk_cell = "-"
+                max_prof_cell = "-"
+            elif t.get("erratic_filtered"):
+                pnl_cell = '<span class="neu">&#8377;0.00</span>'
+                status_txt = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>'
+                details = "<span style='color:var(--muted)'>1st 5-min candle range &gt; 2.0%</span>"
+                risk_cell = "-"
+                max_prof_cell = "-"
+            else:
+                pnl_cell = '<span class="neu">&#8377;0.00</span>'
+                status_txt = '<span class="neu">&#9203; Not Triggered</span>'
+                details = "<span style='color:var(--muted)'>Price never broke 1st 5-min breakout level</span>"
+                risk_cell = "-"
+                max_prof_cell = "-"
+
+            tbody_html += f"""<tr class="{row_class}">
+              <td><span style="color:var(--muted)">#{idx}</span> <b>{t.get('date')}</b></td>
+              <td><b>{t['symbol']}</b></td>
+              <td>{side_badge}</td>
+              <td>{status_txt}</td>
+              <td>{details}</td>
+              <td>{risk_cell}</td>
+              <td>{max_prof_cell}</td>
+              <td>{pnl_cell}</td>
+            </tr>"""
 
     return f"""
     <!-- JOURNAL HERO METRICS -->
@@ -1883,14 +1916,20 @@ def build_journal_tab(journal):
       </div>
     </div>
 
-    <!-- TABLE OF ALL HISTORIC TRADES -->
+    <!-- TABLE OF ALL HISTORIC TRADES WITH FILTER & DAILY BREAKS -->
     <div class="sec" style="margin:0 10px 15px 10px">
-      <div class="sh" style="background:#131824">
+      <div class="sh" style="background:#131824;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>&#128220; Complete Trade Execution History &amp; Risk/Reward Journal</div>
-        <span class="badge" style="background:rgba(0,196,122,0.15);color:var(--green)">Permanent Audit Log</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:10.5px;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:5px">
+            <input type="checkbox" id="journal-exec-filter" onchange="filterJournalRows(this.checked)" checked style="cursor:pointer">
+            Show Only Executed Trades
+          </label>
+          <span class="badge" style="background:rgba(0,196,122,0.15);color:var(--green)">Permanent Audit Log</span>
+        </div>
       </div>
       <div class="tw">
-        <table class="rec-tbl pnl-table">
+        <table class="rec-tbl pnl-table" id="journal-table">
           <thead>
             <tr>
               <th>Date</th>
@@ -1898,15 +1937,28 @@ def build_journal_tab(journal):
               <th>Side</th>
               <th>Status</th>
               <th>Execution Details (Entry &rarr; Exit @ 3:10 PM)</th>
-              <th>Risk Taken (&#8377;)</th>
-              <th>Max Profit Reached</th>
+              <th>Risk Taken (&#8377; &amp; %)</th>
+              <th>Max Profit Reached (&#8377; &amp; %)</th>
               <th>Final P&amp;L</th>
             </tr>
           </thead>
-          <tbody>{rows_html}</tbody>
+          <tbody>{tbody_html}</tbody>
         </table>
       </div>
     </div>
+    <script>
+    function filterJournalRows(onlyExec) {{
+      var rows = document.querySelectorAll('.journal-row-unexec');
+      rows.forEach(function(r) {{
+        r.style.display = onlyExec ? 'none' : '';
+      }});
+    }}
+    // Apply default filter on load
+    document.addEventListener('DOMContentLoaded', function() {{
+      var cb = document.getElementById('journal-exec-filter');
+      if (cb) filterJournalRows(cb.checked);
+    }});
+    </script>
     """
 
 def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bhavcopy (Real OI)"):
