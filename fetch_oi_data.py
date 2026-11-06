@@ -1892,19 +1892,21 @@ def build_journal_tab(journal):
     total_loss = abs(sum(t.get("pnl", 0.0) for t in losses))
     profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else (round(total_profit, 2) if total_profit > 0 else 0.0)
 
-    # Calculate cumulative points for equity curve
-    # Sort triggered trades chronologically
-    sorted_for_curve = sorted(trig_trades, key=lambda x: (x.get("date", ""), x.get("trigger_time", "")))
+    # Calculate cumulative points for equity curve DAY-WISE (chronological)
+    all_dates_asc = sorted(list(set(t.get("date", "") for t in journal if t.get("date"))))
     curve_labels = ["Start"]
     curve_normal = [0.0]
     curve_1to1 = [0.0]
     cum_norm = 0.0
     cum_1to1 = 0.0
 
-    for t in sorted_for_curve:
-        cum_norm += t.get("pnl", 0.0)
-        cum_1to1 += t.get("pnl_1to1", 0.0)
-        curve_labels.append(f"{t.get('date', '')} {t['symbol']}")
+    for d in all_dates_asc:
+        day_trig_trades = [t for t in journal if t.get("date") == d and t.get("triggered")]
+        day_norm_sum = sum(t.get("pnl", 0.0) for t in day_trig_trades)
+        day_1to1_sum = sum(t.get("pnl_1to1", 0.0) for t in day_trig_trades)
+        cum_norm += day_norm_sum
+        cum_1to1 += day_1to1_sum
+        curve_labels.append(d)
         curve_normal.append(round(cum_norm, 1))
         curve_1to1.append(round(cum_1to1, 1))
 
@@ -1928,14 +1930,22 @@ def build_journal_tab(journal):
         day_pnl = round(sum(t.get("pnl", 0.0) for t in day_trig), 2)
         day_sign = "+" if day_pnl >= 0 else ""
         day_color = "var(--green)" if day_pnl >= 0 else ("var(--red)" if day_pnl < 0 else "var(--muted)")
-        day_roi = round(sum(t.get("pnl", 0.0) for t in day_trig) / max(sum(t.get("margin_used", 0.0) for t in day_trig), 1) * 100, 2)
+        day_margin = sum(t.get("margin_used", 0.0) for t in day_trig)
+        day_roi = round(day_pnl / max(day_margin, 1) * 100, 2) if day_margin > 0 else 0.0
+
+        day_1to1 = round(sum(t.get("pnl_1to1", 0.0) for t in day_trig), 2)
+        day_1to1_sign = "+" if day_1to1 >= 0 else ""
+        day_1to1_color = "var(--green)" if day_1to1 >= 0 else ("var(--red)" if day_1to1 < 0 else "var(--muted)")
 
         # Day Header Break / Separator Row
         tbody_html += f"""<tr class="journal-day-header" style="background:#0f1522;border-top:2px solid var(--blue);border-bottom:1px solid #28324a">
-          <td colspan="8" style="padding:10px 14px;font-size:12px;font-weight:700">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <td colspan="9" style="padding:10px 14px;font-size:12px;font-weight:700">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
               <span style="color:#fff">&#128197; Trading Session: <span style="color:var(--blue)">{d}</span> ({len(day_trig)} / {len(day_trades)} Executed)</span>
-              <span style="font-size:12px">Day's Net P&amp;L: <b style="color:{day_color};font-size:13px">{day_sign}&#8377;{fmt(day_pnl, 1)}</b> ({day_sign}{day_roi}% 5X ROI)</span>
+              <div style="display:flex;gap:16px;align-items:center">
+                <span>1:1 Target Net P&amp;L: <b style="color:{day_1to1_color};font-size:13px">{day_1to1_sign}&#8377;{fmt(day_1to1, 1)}</b></span>
+                <span>Normal Net P&amp;L (3:10 PM): <b style="color:{day_color};font-size:13px">{day_sign}&#8377;{fmt(day_pnl, 1)}</b> ({day_sign}{day_roi}% 5X ROI)</span>
+              </div>
             </div>
           </td>
         </tr>"""
@@ -1955,7 +1965,7 @@ def build_journal_tab(journal):
                 max_prof_cell = f"<span style='color:var(--green);font-weight:700'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--green)'>({t.get('max_profit_pct',0)}% peak)</span></span>"
                 sign_1to1 = "+" if t.get("pnl_1to1", 0.0) >= 0 else ""
                 cls_1to1 = "pos" if t.get("pnl_1to1", 0.0) >= 0 else "neg"
-                hit_note = f"<span style='font-size:9.5px;color:var(--green)'>&#10004; Hit @ {t.get('target_1to1_time')}</span>" if t.get("target_1to1_hit") else ("<span style='font-size:9.5px;color:var(--red)'>&#10006; Stopped Out</span>" if t.get("exit_reason") == "SL Hit" else "<span style='font-size:9.5px;color:var(--muted)'>Open</span>")
+                hit_note = f"<span style='font-size:9.5px;color:var(--green)'>&#10004; Hit @ {t.get('target_1to1_time')}</span>" if t.get("target_1to1_hit") else ("<span style='font-size:9.5px;color:var(--red)'>&#10006; Stopped Out</span>" if t.get("exit_reason") == "SL Hit" else "<span style='font-size:9.5px;color:var(--yel)'>&#9200; 3:10 PM Squareoff</span>")
                 pnl_1to1_cell = f'<span class="pc {cls_1to1}">{sign_1to1}&#8377;{fmt(t.get("pnl_1to1",0), 1)} ({sign_1to1}{fmt(t.get("pnl_1to1_pct",0), 2)}%)</span><br>{hit_note}'
             elif t.get("gap_filtered"):
                 pnl_cell = '<span class="neu">&#8377;0.00</span>'
@@ -2188,12 +2198,15 @@ def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bh
 
 # ─── ENTRY POINT ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    wait_for_bhavcopy = "--wait-for-bhavcopy" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+
     # Allow optional date argument: python fetch_oi_data.py 2026-11-04
-    if len(sys.argv) > 1:
+    if len(args) > 0:
         try:
-            analysis_date = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
+            analysis_date = datetime.strptime(args[0], "%Y-%m-%d").date()
         except ValueError:
-            print(f"[error] Invalid date format. Use YYYY-MM-DD. Got: {sys.argv[1]}")
+            print(f"[error] Invalid date format. Use YYYY-MM-DD. Got: {args[0]}")
             sys.exit(1)
     else:
         # Default: last completed trading day
@@ -2210,10 +2223,22 @@ if __name__ == "__main__":
             else:
                 analysis_date = today
 
-    rows, as_of = build_rows(analysis_date)
+    # Bhavcopy availability polling / retry logic
+    max_retries = 6 if wait_for_bhavcopy else 1
+    retry_delay_sec = 60
+    rows = None
+
+    for attempt in range(1, max_retries + 1):
+        rows, as_of = build_rows(analysis_date)
+        if rows:
+            break
+        if attempt < max_retries:
+            print(f"[*] Bhavcopy not yet published for {analysis_date}. Retrying in {retry_delay_sec}s (Attempt {attempt}/{max_retries})...")
+            import time
+            time.sleep(retry_delay_sec)
 
     if not rows:
-        print("[error] No data could be fetched. Check internet connection.")
+        print("[error] No data could be fetched. Check internet connection or NSE server availability.")
         sys.exit(1)
 
     data = classify(rows, as_of)
