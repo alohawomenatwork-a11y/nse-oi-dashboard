@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NSE F&amp;O OI Analysis - 05 Nov 2026</title>
+<style>
+:root{
+  --bg:#0d0f14;--panel:#13161e;--border:#1f2535;--hdr:#1a1d28;
+  --green:#00c47a;--green-dim:rgba(0,196,122,.10);
+  --red:#ff3c5f;  --red-dim:rgba(255,60,95,.10);
+  --blue:#3d9bff; --blue-dim:rgba(61,155,255,.10);
+  --yel:#f5c842;  --yel-dim:rgba(245,200,66,.10);
+  --text:#d4d8e8; --muted:#6b7280;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:12px}
+
+.top-bar{
+  background:linear-gradient(135deg,#0f1623,#1a2035,#0f1623);
+  border-bottom:2px solid var(--blue);
+  padding:12px 18px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+.top-bar h1{font-size:15px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#fff}
+.top-bar h1 span{color:var(--blue)}
+.meta{display:flex;align-items:center;gap:14px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.eod-badge{
+  background:rgba(245,200,66,.15);color:var(--yel);
+  border:1px solid rgba(245,200,66,.3);
+  border-radius:5px;padding:3px 10px;font-weight:700;font-size:10px;letter-spacing:.5px;
+}
+.src-badge{
+  font-size:9.5px;padding:2px 7px;border-radius:4px;
+  background:rgba(61,155,255,.12);color:var(--blue);border:1px solid rgba(61,155,255,.25);
+}
+
+.legend{display:flex;gap:18px;padding:7px 18px;background:var(--hdr);
+        border-bottom:1px solid var(--border);flex-wrap:wrap}
+.li{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.ld{width:9px;height:9px;border-radius:2px}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+
+.sec{background:var(--panel);border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.sh{display:flex;align-items:center;justify-content:space-between;
+    padding:9px 13px;font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase}
+.sh .ico{font-size:14px;margin-right:5px}
+.badge{font-size:9.5px;padding:2px 7px;border-radius:12px;font-weight:600}
+
+.fl .sh{background:#041508;color:#00ff9d;border-bottom:1px solid #0a3a18}
+.fl .sh .badge{background:var(--green-dim);color:var(--green)}
+.fs .sh{background:#15040a;color:#ff7799;border-bottom:1px solid #3a0a18}
+.fs .sh .badge{background:var(--red-dim);color:var(--red)}
+.sc .sh{background:#041020;color:#7bbfff;border-bottom:1px solid #0a2a4a}
+.sc .sh .badge{background:var(--blue-dim);color:var(--blue)}
+.lu .sh{background:#15120a;color:#ffd970;border-bottom:1px solid #3a2e0a}
+.lu .sh .badge{background:var(--yel-dim);color:var(--yel)}
+
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead th{
+  padding:6px 7px;font-size:9.5px;font-weight:600;letter-spacing:.4px;
+  text-transform:uppercase;color:var(--muted);text-align:right;white-space:nowrap;
+  border-bottom:1px solid var(--border);
+}
+thead th:first-child{text-align:left}
+.fl thead{background:#06200c}.fs thead{background:#200612}
+.sc thead{background:#061020}.lu thead{background:#201806}
+
+tbody tr{border-bottom:1px solid #191c27;transition:background .12s}
+tbody tr:hover{background:#1c2030}
+tbody tr:last-child{border-bottom:none}
+td{padding:5px 7px;text-align:right;white-space:nowrap;font-size:11px}
+td:first-child{text-align:left;font-weight:700;color:#fff;font-size:11.5px}
+
+.pos{color:var(--green)}.neg{color:var(--red)}.neu{color:var(--muted)}
+.pc{font-weight:700;padding:1px 5px;border-radius:3px}
+.pill{display:inline-block;padding:1px 6px;border-radius:3px;font-weight:700;font-size:10px}
+.pill.pos{background:var(--green-dim)}.pill.neg{background:var(--red-dim)}
+.rg{background:rgba(0,196,122,.04)}.rr{background:rgba(255,60,95,.04)}
+/* Delivery % */
+.dv{font-weight:700;padding:1px 6px;border-radius:3px;font-size:10.5px}
+.dv.pos{background:rgba(0,196,122,.14);color:var(--green)}
+.dv.amb{background:rgba(245,200,66,.14);color:var(--yel)}
+.dv.neg{background:rgba(255,60,95,.14);color:var(--red)}
+
+/* TRADE RECOMMENDATIONS & RULES */
+.trade-deck{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 10px 10px 10px}
+@media(max-width:860px){.trade-deck{grid-template-columns:1fr}}
+
+.rec-card{background:var(--panel);border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.rec-hdr{padding:9px 13px;font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.rec-buy .rec-hdr{background:#041a0e;color:#00ff9d;border-bottom:1px solid #0a3a18}
+.rec-sell .rec-hdr{background:#1f060c;color:#ff7799;border-bottom:1px solid #3a0a18}
+
+.rec-tbl th{padding:6px 8px;font-size:9.5px;text-transform:uppercase;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)}
+.rec-tbl td{padding:6px 8px;font-size:11px;border-bottom:1px solid #191c27;vertical-align:top}
+.rec-tbl tr:last-child td{border-bottom:none}
+.rank-badge{display:inline-block;padding:1px 6px;border-radius:10px;font-weight:800;font-size:9.5px}
+.rank-buy{background:rgba(0,196,122,.2);color:#00ff9d}
+.rank-sell{background:rgba(255,60,95,.2);color:#ff7799}
+.plan-note{font-size:10px;color:#9aa3bd;margin-top:2px;line-height:1.35}
+
+/* P&L BADGES */
+.pnl-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;font-weight:700;font-size:10px;margin-top:4px}
+.pnl-profit{background:rgba(0,196,122,.18);color:#00ff9d;border:1px solid rgba(0,196,122,.35)}
+.pnl-loss{background:rgba(255,60,95,.18);color:#ff7799;border:1px solid rgba(255,60,95,.35)}
+.pnl-notrig{background:rgba(107,114,128,.18);color:#9ca3af;border:1px solid rgba(107,114,128,.35)}
+.pnl-eratic{background:rgba(245,200,66,.18);color:#f5c842;border:1px solid rgba(245,200,66,.35)}
+
+/* P&L TRACKER TAB STYLES */
+.pnl-hero{display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:10px;padding:12px 10px}
+.pnl-kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px}
+.pnl-kpi-lbl{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--muted);letter-spacing:.6px}
+.pnl-kpi-val{font-size:22px;font-weight:800;margin-top:6px}
+.pnl-kpi-sub{font-size:10px;color:var(--muted);margin-top:3px}
+.pnl-table thead th{background:#111927}
+.badge-5m{background:rgba(61,155,255,0.15);color:var(--blue);border:1px solid rgba(61,155,255,0.3);padding:2px 6px;border-radius:4px;font-size:9.5px;font-weight:700}
+
+/* RULES STRIP */
+.rules-container{margin:0 10px 12px 10px;padding:12px 14px;background:#10141f;border:1px solid #232c40;border-left:4px solid var(--blue);border-radius:6px}
+.rules-title{font-size:11px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.rules-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:10px}
+.rule-box{background:rgba(255,255,255,0.02);padding:8px 10px;border-radius:5px;border:1px solid rgba(255,255,255,0.05)}
+.rule-box b{color:var(--text);font-size:10.5px}
+.rule-box p{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4}
+
+/* LIVE REFRESH BAR */
+.live-bar{display:flex;align-items:center;gap:10px;padding:7px 16px;background:#0d1120;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.live-dot{width:8px;height:8px;border-radius:50%;background:#6b7280;display:inline-block;flex-shrink:0}
+.live-dot.on{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.live-btn{background:rgba(61,155,255,0.15);color:var(--blue);border:1px solid rgba(61,155,255,0.35);border-radius:5px;padding:4px 11px;font-size:10.5px;font-weight:700;cursor:pointer;transition:all 0.2s;letter-spacing:.4px}
+.live-btn:hover{background:rgba(61,155,255,0.3)}
+.live-btn.on{background:rgba(0,196,122,0.15);color:var(--green);border-color:rgba(0,196,122,0.4)}
+.live-btn.on:hover{background:rgba(0,196,122,0.28)}
+.live-refresh-btn{background:rgba(245,200,66,0.12);color:var(--yel);border:1px solid rgba(245,200,66,0.3);border-radius:5px;padding:4px 11px;font-size:10.5px;font-weight:700;cursor:pointer;transition:all 0.2s}
+.live-refresh-btn:hover{background:rgba(245,200,66,0.25)}
+.live-status{font-size:10px;color:var(--muted);margin-left:4px}
+.live-ts{font-size:9.5px;color:var(--muted)}
+.live-err{font-size:10px;color:var(--red)}
+.live-interval-sel{background:#1a1d28;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:10px;cursor:pointer}
+
+/* NAVIGATION TABS */
+.nav-tabs{display:flex;gap:4px;padding:10px 14px 0 14px;background:var(--hdr);border-bottom:1px solid var(--border)}
+.tab-btn{background:transparent;border:none;border-bottom:3px solid transparent;color:var(--muted);padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:0.6px;text-transform:uppercase;transition:all 0.2s}
+.tab-btn:hover{color:#fff}
+.tab-btn.active{color:var(--blue);border-bottom-color:var(--blue);background:rgba(61,155,255,0.06);border-radius:4px 4px 0 0}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* HISTORIC TAB STYLES */
+.hist-summary{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;padding:12px 10px}
+.hist-stat{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 14px}
+.hist-stat .val{font-size:18px;font-weight:800;color:#fff;margin-top:4px}
+.hist-stat .sub{font-size:10px;color:var(--muted);margin-top:2px}
+.hist-table thead th{background:#171d2b}
+
+.foot{text-align:center;padding:9px;color:var(--muted);font-size:9.5px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+<div class="top-bar">
+  <h1>Top 10 &nbsp;&middot;&nbsp; Market Sentiments &nbsp;&middot;&nbsp;
+      <span>OI Change &amp; Price Change Analysis</span></h1>
+  <div class="meta">
+    <span class="eod-badge">END OF DAY</span>
+    <span>05 Nov 2026</span>
+    <span class="src-badge">NSE Bhavcopy (Real OI)</span>
+  </div>
+</div>
+
+<!-- NAVIGATION TABS -->
+<div class="nav-tabs">
+  <button class="tab-btn active" onclick="openTab('daily-tab', this)">&#128202; Daily Dashboard &amp; Picks</button>
+  <button class="tab-btn" onclick="openTab('pnl-tab', this)">&#128176; Capital &amp; Day's P&amp;L Tracker</button>
+  <button class="tab-btn" onclick="openTab('historic-tab', this)">&#128197; 1-Week Historic Trend &amp; Setup</button>
+</div>
+
+<!-- TAB 1: DAILY DASHBOARD (100% UNCHANGED CONTENT) -->
+<div id="daily-tab" class="tab-content active">
+  <div class="legend">
+    <div class="li"><div class="ld" style="background:#00c47a"></div>Fresh Longs &mdash; Price&uarr; OI&uarr;</div>
+    <div class="li"><div class="ld" style="background:#ff3c5f"></div>Fresh Shorts &mdash; Price&darr; OI&uarr;</div>
+    <div class="li"><div class="ld" style="background:#3d9bff"></div>Short Covering &mdash; Price&uarr; OI&darr;</div>
+    <div class="li"><div class="ld" style="background:#f5c842"></div>Long Unwinding &mdash; Price&darr; OI&darr;</div>
+    <div class="li" style="margin-left:auto;gap:8px">
+      <span style="font-size:9.5px;color:#6b7280">Deliv%:</span>
+      <span style="background:rgba(0,196,122,.14);color:#00c47a;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700">&ge;50% Strong</span>
+      <span style="background:rgba(245,200,66,.14);color:#f5c842;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700">30-50% Moderate</span>
+      <span style="background:rgba(255,60,95,.14);color:#ff3c5f;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700">&lt;30% Speculative</span>
+    </div>
+  </div>
+  <div class="grid">
+<div class="sec fl">
+  <div class="sh"><div><span class="ico">&#129001;</span>Fresh Longs</div>
+    <span class="badge">Price &uarr; &nbsp; OI &uarr;</span></div>
+  <div class="tw"><table>
+    <thead><tr>
+      <th>Symbol</th><th>Prev Close</th><th>Open</th><th>High</th><th>Low</th>
+      <th>Close</th><th>Price Chg%</th><th>OI</th><th>OI +/-</th><th>OI Chg%</th>
+      <th title="Delivery Volume / Total Volume. High = genuine activity">Deliv%</th>
+    </tr></thead>
+    <tbody><tr class="rg">
+          <td>COROMANDEL</td>
+          <td>1,837.00</td>
+          <td>1,860.00</td>
+          <td>1,915.00</td>
+          <td>1,850.00</td>
+          <td><b>1,900.00</b></td>
+          <td><span class="pc pos">+3.43%</span></td>
+          <td>217,200</td>
+          <td class="pos">+75,900</td>
+          <td><span class="pill pos">+53.72%</span></td>
+          <td><span class="dv pos">54.50%</span></td>
+        </tr><tr class="">
+          <td>KARURVYSYA</td>
+          <td>343.90</td>
+          <td>350.00</td>
+          <td>365.00</td>
+          <td>349.00</td>
+          <td><b>360.50</b></td>
+          <td><span class="pc pos">+4.83%</span></td>
+          <td>2,273,850</td>
+          <td class="pos">+382,850</td>
+          <td><span class="pill pos">+20.25%</span></td>
+          <td><span class="dv amb">44.39%</span></td>
+        </tr><tr class="">
+          <td>SYRMA</td>
+          <td>1,512.60</td>
+          <td>1,550.00</td>
+          <td>1,557.20</td>
+          <td>1,504.20</td>
+          <td><b>1,515.00</b></td>
+          <td><span class="pc pos">+0.16%</span></td>
+          <td>2,019,225</td>
+          <td class="pos">+269,750</td>
+          <td><span class="pill pos">+15.42%</span></td>
+          <td><span class="dv amb">36.36%</span></td>
+        </tr><tr class="">
+          <td>SONACOMS</td>
+          <td>893.70</td>
+          <td>900.00</td>
+          <td>918.70</td>
+          <td>877.95</td>
+          <td><b>915.25</b></td>
+          <td><span class="pc pos">+2.41%</span></td>
+          <td>14,404,775</td>
+          <td class="pos">+1,385,475</td>
+          <td><span class="pill pos">+10.64%</span></td>
+          <td><span class="dv pos">55.78%</span></td>
+        </tr><tr class="">
+          <td>SUNPHARMA</td>
+          <td>1,773.40</td>
+          <td>1,774.00</td>
+          <td>1,839.70</td>
+          <td>1,762.40</td>
+          <td><b>1,829.00</b></td>
+          <td><span class="pc pos">+3.14%</span></td>
+          <td>20,676,250</td>
+          <td class="pos">+1,653,750</td>
+          <td><span class="pill pos">+8.69%</span></td>
+          <td><span class="dv pos">62.07%</span></td>
+        </tr><tr class="">
+          <td>CUB</td>
+          <td>213.50</td>
+          <td>216.00</td>
+          <td>222.15</td>
+          <td>214.65</td>
+          <td><b>218.60</b></td>
+          <td><span class="pc pos">+2.39%</span></td>
+          <td>5,938,050</td>
+          <td class="pos">+451,050</td>
+          <td><span class="pill pos">+8.22%</span></td>
+          <td><span class="dv pos">51.31%</span></td>
+        </tr><tr class="">
+          <td>TCS</td>
+          <td>2,436.00</td>
+          <td>2,479.00</td>
+          <td>2,521.80</td>
+          <td>2,475.00</td>
+          <td><b>2,495.70</b></td>
+          <td><span class="pc pos">+2.45%</span></td>
+          <td>21,565,150</td>
+          <td class="pos">+1,396,975</td>
+          <td><span class="pill pos">+6.93%</span></td>
+          <td><span class="dv pos">61.84%</span></td>
+        </tr><tr class="">
+          <td>INDIANB</td>
+          <td>854.00</td>
+          <td>868.00</td>
+          <td>900.85</td>
+          <td>862.30</td>
+          <td><b>892.15</b></td>
+          <td><span class="pc pos">+4.47%</span></td>
+          <td>10,255,000</td>
+          <td class="pos">+506,000</td>
+          <td><span class="pill pos">+5.19%</span></td>
+          <td><span class="dv pos">55.97%</span></td>
+        </tr><tr class="">
+          <td>SWIGGY</td>
+          <td>178.89</td>
+          <td>183.00</td>
+          <td>190.59</td>
+          <td>180.67</td>
+          <td><b>189.51</b></td>
+          <td><span class="pc pos">+5.94%</span></td>
+          <td>85,585,550</td>
+          <td class="pos">+4,210,650</td>
+          <td><span class="pill pos">+5.17%</span></td>
+          <td><span class="dv amb">48.14%</span></td>
+        </tr><tr class="">
+          <td>NBCC</td>
+          <td>77.74</td>
+          <td>79.00</td>
+          <td>81.15</td>
+          <td>77.50</td>
+          <td><b>80.33</b></td>
+          <td><span class="pc pos">+3.33%</span></td>
+          <td>97,857,500</td>
+          <td class="pos">+4,576,000</td>
+          <td><span class="pill pos">+4.91%</span></td>
+          <td><span class="dv neg">22.56%</span></td>
+        </tr></tbody>
+  </table></div>
+</div><div class="sec fs">
+  <div class="sh"><div><span class="ico">&#128997;</span>Fresh Shorts</div>
+    <span class="badge">Price &darr; &nbsp; OI &uarr;</span></div>
+  <div class="tw"><table>
+    <thead><tr>
+      <th>Symbol</th><th>Prev Close</th><th>Open</th><th>High</th><th>Low</th>
+      <th>Close</th><th>Price Chg%</th><th>OI</th><th>OI +/-</th><th>OI Chg%</th>
+      <th title="Delivery Volume / Total Volume. High = genuine activity">Deliv%</th>
+    </tr></thead>
+    <tbody><tr class="rr">
+          <td>DATAPATTNS</td>
+          <td>4,078.00</td>
+          <td>4,149.00</td>
+          <td>4,149.90</td>
+          <td>3,925.10</td>
+          <td><b>3,959.90</b></td>
+          <td><span class="pc neg">-2.90%</span></td>
+          <td>347,375</td>
+          <td class="pos">+133,000</td>
+          <td><span class="pill pos">+62.04%</span></td>
+          <td><span class="dv amb">31.51%</span></td>
+        </tr><tr class="">
+          <td>PIIND</td>
+          <td>2,187.00</td>
+          <td>2,057.20</td>
+          <td>2,077.70</td>
+          <td>1,749.50</td>
+          <td><b>1,770.00</b></td>
+          <td><span class="pc neg">-19.07%</span></td>
+          <td>6,961,350</td>
+          <td class="pos">+1,987,900</td>
+          <td><span class="pill pos">+39.97%</span></td>
+          <td><span class="dv amb">30.63%</span></td>
+        </tr><tr class="">
+          <td>BHARATFORG</td>
+          <td>1,812.80</td>
+          <td>1,843.60</td>
+          <td>1,884.70</td>
+          <td>1,740.00</td>
+          <td><b>1,753.00</b></td>
+          <td><span class="pc neg">-3.30%</span></td>
+          <td>10,142,500</td>
+          <td class="pos">+1,575,500</td>
+          <td><span class="pill pos">+18.39%</span></td>
+          <td><span class="dv amb">34.72%</span></td>
+        </tr><tr class="">
+          <td>OIL</td>
+          <td>458.00</td>
+          <td>452.00</td>
+          <td>453.00</td>
+          <td>427.70</td>
+          <td><b>439.75</b></td>
+          <td><span class="pc neg">-3.98%</span></td>
+          <td>13,003,200</td>
+          <td class="pos">+2,014,600</td>
+          <td><span class="pill pos">+18.33%</span></td>
+          <td><span class="dv neg">28.17%</span></td>
+        </tr><tr class="">
+          <td>SOLARINDS</td>
+          <td>19,393.00</td>
+          <td>19,770.00</td>
+          <td>19,770.00</td>
+          <td>18,415.00</td>
+          <td><b>18,520.00</b></td>
+          <td><span class="pc neg">-4.50%</span></td>
+          <td>1,040,425</td>
+          <td class="pos">+104,750</td>
+          <td><span class="pill pos">+11.20%</span></td>
+          <td><span class="dv amb">36.49%</span></td>
+        </tr><tr class="">
+          <td>NYKAA</td>
+          <td>355.50</td>
+          <td>363.00</td>
+          <td>363.40</td>
+          <td>343.00</td>
+          <td><b>350.30</b></td>
+          <td><span class="pc neg">-1.46%</span></td>
+          <td>39,239,525</td>
+          <td class="pos">+2,784,675</td>
+          <td><span class="pill pos">+7.64%</span></td>
+          <td><span class="dv amb">41.19%</span></td>
+        </tr><tr class="">
+          <td>SIEMENS</td>
+          <td>3,509.00</td>
+          <td>3,506.60</td>
+          <td>3,506.60</td>
+          <td>3,406.60</td>
+          <td><b>3,432.00</b></td>
+          <td><span class="pc neg">-2.19%</span></td>
+          <td>3,602,900</td>
+          <td class="pos">+217,175</td>
+          <td><span class="pill pos">+6.41%</span></td>
+          <td><span class="dv amb">36.13%</span></td>
+        </tr><tr class="">
+          <td>ABB</td>
+          <td>6,750.00</td>
+          <td>6,690.00</td>
+          <td>6,726.50</td>
+          <td>6,572.00</td>
+          <td><b>6,628.00</b></td>
+          <td><span class="pc neg">-1.81%</span></td>
+          <td>1,993,000</td>
+          <td class="pos">+120,125</td>
+          <td><span class="pill pos">+6.41%</span></td>
+          <td><span class="dv amb">43.01%</span></td>
+        </tr><tr class="">
+          <td>PREMIERENE</td>
+          <td>904.00</td>
+          <td>918.90</td>
+          <td>925.70</td>
+          <td>872.20</td>
+          <td><b>882.50</b></td>
+          <td><span class="pc neg">-2.38%</span></td>
+          <td>16,916,900</td>
+          <td class="pos">+952,250</td>
+          <td><span class="pill pos">+5.96%</span></td>
+          <td><span class="dv neg">24.24%</span></td>
+        </tr><tr class="">
+          <td>CGPOWER</td>
+          <td>841.45</td>
+          <td>841.00</td>
+          <td>841.00</td>
+          <td>797.00</td>
+          <td><b>808.80</b></td>
+          <td><span class="pc neg">-3.88%</span></td>
+          <td>22,520,750</td>
+          <td class="pos">+1,192,550</td>
+          <td><span class="pill pos">+5.59%</span></td>
+          <td><span class="dv amb">41.71%</span></td>
+        </tr></tbody>
+  </table></div>
+</div><div class="sec sc">
+  <div class="sh"><div><span class="ico">&#128998;</span>Short Covering</div>
+    <span class="badge">Price &uarr; &nbsp; OI &darr;</span></div>
+  <div class="tw"><table>
+    <thead><tr>
+      <th>Symbol</th><th>Prev Close</th><th>Open</th><th>High</th><th>Low</th>
+      <th>Close</th><th>Price Chg%</th><th>OI</th><th>OI +/-</th><th>OI Chg%</th>
+      <th title="Delivery Volume / Total Volume. High = genuine activity">Deliv%</th>
+    </tr></thead>
+    <tbody><tr class="rg">
+          <td>MOTILALOFS</td>
+          <td>1,013.00</td>
+          <td>1,037.45</td>
+          <td>1,095.85</td>
+          <td>1,032.65</td>
+          <td><b>1,095.00</b></td>
+          <td><span class="pc pos">+8.09%</span></td>
+          <td>5,134,375</td>
+          <td class="neg">541,725</td>
+          <td><span class="pill neg">-9.54%</span></td>
+          <td><span class="dv neg">29.90%</span></td>
+        </tr><tr class="">
+          <td>M&M</td>
+          <td>2,961.90</td>
+          <td>3,010.00</td>
+          <td>3,145.00</td>
+          <td>2,984.20</td>
+          <td><b>3,127.50</b></td>
+          <td><span class="pc pos">+5.59%</span></td>
+          <td>13,510,000</td>
+          <td class="neg">1,266,800</td>
+          <td><span class="pill neg">-8.57%</span></td>
+          <td><span class="dv pos">60.54%</span></td>
+        </tr><tr class="">
+          <td>SBICARD</td>
+          <td>553.00</td>
+          <td>562.00</td>
+          <td>591.00</td>
+          <td>559.15</td>
+          <td><b>585.00</b></td>
+          <td><span class="pc pos">+5.79%</span></td>
+          <td>16,676,000</td>
+          <td class="neg">1,429,600</td>
+          <td><span class="pill neg">-7.90%</span></td>
+          <td><span class="dv amb">35.24%</span></td>
+        </tr><tr class="">
+          <td>BSE</td>
+          <td>3,601.50</td>
+          <td>3,665.00</td>
+          <td>3,842.00</td>
+          <td>3,651.70</td>
+          <td><b>3,790.00</b></td>
+          <td><span class="pc pos">+5.23%</span></td>
+          <td>9,294,400</td>
+          <td class="neg">773,200</td>
+          <td><span class="pill neg">-7.68%</span></td>
+          <td><span class="dv amb">39.10%</span></td>
+        </tr><tr class="">
+          <td>INDIGO</td>
+          <td>5,140.80</td>
+          <td>5,480.00</td>
+          <td>5,489.00</td>
+          <td>5,360.10</td>
+          <td><b>5,420.00</b></td>
+          <td><span class="pc pos">+5.43%</span></td>
+          <td>5,363,850</td>
+          <td class="neg">406,500</td>
+          <td><span class="pill neg">-7.04%</span></td>
+          <td><span class="dv pos">50.21%</span></td>
+        </tr><tr class="">
+          <td>KEI</td>
+          <td>3,996.40</td>
+          <td>4,048.00</td>
+          <td>4,108.50</td>
+          <td>3,984.80</td>
+          <td><b>4,061.10</b></td>
+          <td><span class="pc pos">+1.62%</span></td>
+          <td>2,004,100</td>
+          <td class="neg">139,125</td>
+          <td><span class="pill neg">-6.49%</span></td>
+          <td><span class="dv pos">55.58%</span></td>
+        </tr><tr class="">
+          <td>UJJIVANSFB</td>
+          <td>56.70</td>
+          <td>57.81</td>
+          <td>60.00</td>
+          <td>57.81</td>
+          <td><b>58.41</b></td>
+          <td><span class="pc pos">+3.02%</span></td>
+          <td>54,464,000</td>
+          <td class="neg">3,656,000</td>
+          <td><span class="pill neg">-6.29%</span></td>
+          <td><span class="dv amb">39.20%</span></td>
+        </tr><tr class="">
+          <td>BPCL</td>
+          <td>304.70</td>
+          <td>320.00</td>
+          <td>322.00</td>
+          <td>312.30</td>
+          <td><b>317.10</b></td>
+          <td><span class="pc pos">+4.07%</span></td>
+          <td>40,791,650</td>
+          <td class="neg">2,733,400</td>
+          <td><span class="pill neg">-6.28%</span></td>
+          <td><span class="dv pos">57.41%</span></td>
+        </tr><tr class="">
+          <td>PATANJALI</td>
+          <td>383.90</td>
+          <td>386.50</td>
+          <td>413.90</td>
+          <td>377.70</td>
+          <td><b>410.70</b></td>
+          <td><span class="pc pos">+6.98%</span></td>
+          <td>29,808,925</td>
+          <td class="neg">1,907,425</td>
+          <td><span class="pill neg">-6.01%</span></td>
+          <td><span class="dv neg">27.86%</span></td>
+        </tr><tr class="">
+          <td>HDFCAMC</td>
+          <td>2,505.00</td>
+          <td>2,525.10</td>
+          <td>2,642.40</td>
+          <td>2,525.10</td>
+          <td><b>2,640.00</b></td>
+          <td><span class="pc pos">+5.39%</span></td>
+          <td>6,561,600</td>
+          <td class="neg">418,200</td>
+          <td><span class="pill neg">-5.99%</span></td>
+          <td><span class="dv pos">62.14%</span></td>
+        </tr></tbody>
+  </table></div>
+</div><div class="sec lu">
+  <div class="sh"><div><span class="ico">&#129000;</span>Long Unwinding</div>
+    <span class="badge">Price &darr; &nbsp; OI &darr;</span></div>
+  <div class="tw"><table>
+    <thead><tr>
+      <th>Symbol</th><th>Prev Close</th><th>Open</th><th>High</th><th>Low</th>
+      <th>Close</th><th>Price Chg%</th><th>OI</th><th>OI +/-</th><th>OI Chg%</th>
+      <th title="Delivery Volume / Total Volume. High = genuine activity">Deliv%</th>
+    </tr></thead>
+    <tbody><tr class="rr">
+          <td>APLAPOLLO</td>
+          <td>2,199.80</td>
+          <td>2,222.00</td>
+          <td>2,224.40</td>
+          <td>2,180.10</td>
+          <td><b>2,194.20</b></td>
+          <td><span class="pc neg">-0.25%</span></td>
+          <td>13,684,300</td>
+          <td class="neg">974,050</td>
+          <td><span class="pill neg">-6.65%</span></td>
+          <td><span class="dv amb">47.12%</span></td>
+        </tr><tr class="">
+          <td>POWERINDIA</td>
+          <td>29,100.00</td>
+          <td>29,055.00</td>
+          <td>29,055.00</td>
+          <td>27,755.00</td>
+          <td><b>28,200.00</b></td>
+          <td><span class="pc neg">-3.09%</span></td>
+          <td>497,450</td>
+          <td class="neg">34,650</td>
+          <td><span class="pill neg">-6.51%</span></td>
+          <td><span class="dv amb">42.71%</span></td>
+        </tr><tr class="">
+          <td>GAIL</td>
+          <td>186.22</td>
+          <td>188.90</td>
+          <td>188.90</td>
+          <td>184.68</td>
+          <td><b>185.99</b></td>
+          <td><span class="pc neg">-0.12%</span></td>
+          <td>70,662,750</td>
+          <td class="neg">3,404,450</td>
+          <td><span class="pill neg">-4.60%</span></td>
+          <td><span class="dv pos">65.67%</span></td>
+        </tr><tr class="">
+          <td>MARICO</td>
+          <td>890.00</td>
+          <td>897.00</td>
+          <td>897.00</td>
+          <td>883.70</td>
+          <td><b>887.75</b></td>
+          <td><span class="pc neg">-0.25%</span></td>
+          <td>11,792,400</td>
+          <td class="neg">422,400</td>
+          <td><span class="pill neg">-3.46%</span></td>
+          <td><span class="dv pos">65.23%</span></td>
+        </tr><tr class="">
+          <td>GVT&D</td>
+          <td>4,265.00</td>
+          <td>4,176.00</td>
+          <td>4,180.00</td>
+          <td>4,081.20</td>
+          <td><b>4,145.00</b></td>
+          <td><span class="pc neg">-2.81%</span></td>
+          <td>2,351,250</td>
+          <td class="neg">79,875</td>
+          <td><span class="pill neg">-3.29%</span></td>
+          <td><span class="dv amb">47.49%</span></td>
+        </tr><tr class="">
+          <td>MANKIND</td>
+          <td>2,537.90</td>
+          <td>2,560.00</td>
+          <td>2,561.20</td>
+          <td>2,495.00</td>
+          <td><b>2,518.00</b></td>
+          <td><span class="pc neg">-0.78%</span></td>
+          <td>3,065,500</td>
+          <td class="neg">103,000</td>
+          <td><span class="pill neg">-3.25%</span></td>
+          <td><span class="dv amb">42.38%</span></td>
+        </tr><tr class="">
+          <td>BEL</td>
+          <td>398.00</td>
+          <td>404.00</td>
+          <td>404.50</td>
+          <td>393.50</td>
+          <td><b>395.10</b></td>
+          <td><span class="pc neg">-0.73%</span></td>
+          <td>93,163,650</td>
+          <td class="neg">3,107,925</td>
+          <td><span class="pill neg">-3.23%</span></td>
+          <td><span class="dv pos">56.41%</span></td>
+        </tr><tr class="">
+          <td>ALKEM</td>
+          <td>5,216.50</td>
+          <td>5,234.50</td>
+          <td>5,234.50</td>
+          <td>5,151.50</td>
+          <td><b>5,190.00</b></td>
+          <td><span class="pc neg">-0.51%</span></td>
+          <td>1,646,500</td>
+          <td class="neg">46,375</td>
+          <td><span class="pill neg">-2.74%</span></td>
+          <td><span class="dv pos">55.75%</span></td>
+        </tr><tr class="">
+          <td>DRREDDY</td>
+          <td>1,374.00</td>
+          <td>1,377.00</td>
+          <td>1,384.00</td>
+          <td>1,357.00</td>
+          <td><b>1,366.00</b></td>
+          <td><span class="pc neg">-0.58%</span></td>
+          <td>16,146,875</td>
+          <td class="neg">395,625</td>
+          <td><span class="pill neg">-2.39%</span></td>
+          <td><span class="dv pos">55.30%</span></td>
+        </tr><tr class="">
+          <td>BHARTIARTL</td>
+          <td>2,067.60</td>
+          <td>2,084.00</td>
+          <td>2,084.00</td>
+          <td>2,048.00</td>
+          <td><b>2,056.90</b></td>
+          <td><span class="pc neg">-0.52%</span></td>
+          <td>50,567,550</td>
+          <td class="neg">1,148,550</td>
+          <td><span class="pill neg">-2.22%</span></td>
+          <td><span class="dv pos">59.46%</span></td>
+        </tr></tbody>
+  </table></div>
+</div>
+  </div>
+
+  <!-- TRADE PICKS & RULES -->
+
+    <div class="trade-deck">
+      <div class="rec-card rec-buy">
+        <div class="rec-hdr">
+          <div>&#128640; Top 5 Potential BUY Candidates (Ranked)</div>
+          <span style="font-size:9px;color:#00ff9d;background:rgba(0,255,157,0.12);padding:2px 6px;border-radius:4px">&#8377;10k Margin (5X Leverage = &#8377;50k / Stock)</span>
+        </div>
+        <div class="tw">
+          <table class="rec-tbl">
+            <thead>
+              <tr><th>Stock / Signal</th><th>Close / Price%</th><th>OI Change</th><th>Deliv%</th><th>Execution Setup &amp; P&amp;L</th></tr>
+            </thead>
+            <tbody><tr>
+          <td><span class="rank-badge rank-buy">#1</span> <b>COROMANDEL</b><br><span style="font-size:9.5px;color:#00ff9d">Fresh Long</span></td>
+          <td><b>1,900.00</b><br><span class="pc pos">+3.43%</span></td>
+          <td><span class="pill pos">+53.72%</span></td>
+          <td><span class="dv pos">54.50%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter LONG on break of 1st 5-min candle High (High: &#8377;1,910.30) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's Low)</span>.<br>
+              Closed near high (1,915.00). Strong institutional backing with 54.5% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Opened BELOW Prev Close: &#8377;1,891.10 &lt; &#8377;1,900.00 [-0.47%])</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#2</span> <b>M&M</b><br><span style="font-size:9.5px;color:#00ff9d">Short Covering</span></td>
+          <td><b>3,127.50</b><br><span class="pc pos">+5.59%</span></td>
+          <td><span class="pill neg">-8.57%</span></td>
+          <td><span class="dv pos">60.54%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter LONG on break of 1st 5-min candle High (High: &#8377;3,212.10) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's Low)</span>.<br>
+              Closed near high (3,145.00). Strong institutional backing with 60.5% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (1st 5m range: 2.59% &gt; 2.0% threshold)</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#3</span> <b>HDFCAMC</b><br><span style="font-size:9.5px;color:#00ff9d">Short Covering</span></td>
+          <td><b>2,640.00</b><br><span class="pc pos">+5.39%</span></td>
+          <td><span class="pill neg">-5.99%</span></td>
+          <td><span class="dv pos">62.14%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter LONG on break of 1st 5-min candle High (High: &#8377;2,619.10) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's Low)</span>.<br>
+              Closed near high (2,642.40). Strong institutional backing with 62.1% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Opened BELOW Prev Close: &#8377;2,611.50 &lt; &#8377;2,640.00 [-1.08%])</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#4</span> <b>SUNPHARMA</b><br><span style="font-size:9.5px;color:#00ff9d">Fresh Long</span></td>
+          <td><b>1,829.00</b><br><span class="pc pos">+3.14%</span></td>
+          <td><span class="pill pos">+8.69%</span></td>
+          <td><span class="dv pos">62.07%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter LONG on break of 1st 5-min candle High (High: &#8377;1,837.50) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's Low)</span>.<br>
+              Closed near high (1,839.70). Strong institutional backing with 62.1% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Opened BELOW Prev Close: &#8377;1,820.80 &lt; &#8377;1,829.00 [-0.45%])</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#5</span> <b>SONACOMS</b><br><span style="font-size:9.5px;color:#00ff9d">Fresh Long</span></td>
+          <td><b>915.25</b><br><span class="pc pos">+2.41%</span></td>
+          <td><span class="pill pos">+10.64%</span></td>
+          <td><span class="dv pos">55.78%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter LONG on break of 1st 5-min candle High (High: &#8377;906.40) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's Low)</span>.<br>
+              Closed near high (918.70). Strong institutional backing with 55.8% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Opened BELOW Prev Close: &#8377;906.40 &lt; &#8377;915.25 [-0.97%])</span>
+            </div>
+          </td>
+        </tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="rec-card rec-sell">
+        <div class="rec-hdr">
+          <div>&#129690; Top 5 Potential SELL Candidates (Ranked)</div>
+          <span style="font-size:9px;color:#ff7799;background:rgba(255,119,153,0.12);padding:2px 6px;border-radius:4px">&#8377;10k Margin (5X Leverage = &#8377;50k / Stock)</span>
+        </div>
+        <div class="tw">
+          <table class="rec-tbl">
+            <thead>
+              <tr><th>Stock / Signal</th><th>Close / Price%</th><th>OI Change</th><th>Deliv%</th><th>Execution Setup &amp; P&amp;L</th></tr>
+            </thead>
+            <tbody><tr>
+          <td><span class="rank-badge rank-sell">#1</span> <b>PIIND</b><br><span style="font-size:9.5px;color:#ff7799">Fresh Short</span></td>
+          <td><b>1,770.00</b><br><span class="pc neg">-19.07%</span></td>
+          <td><span class="pill pos">+39.97%</span></td>
+          <td><span class="dv amb">30.63%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter SHORT on break of 1st 5-min candle Low (Low: &#8377;1,728.50) &middot; <span style='color:#ff9999'>SL: &#8377;1,758.00 (Day's High)</span>.<br>
+              Weak close near low (1,749.50). Bearish grip confirmed with 30.6% delivery.<br>
+              <span class="pnl-tag pnl-profit">&#128176; P&amp;L (+&#8377;145.6 / +1.50% on &#8377;9,680 margin) &nbsp;&middot;&nbsp; 5X Qty: 28 Shorted @ &#8377;1,728.5 (Exposure: &#8377;48,398) &nbsp;&middot;&nbsp; &rarr; LTP: &#8377;1,723.3 (SL: &#8377;1,758.0 Safe)</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#2</span> <b>DATAPATTNS</b><br><span style="font-size:9.5px;color:#ff7799">Fresh Short</span></td>
+          <td><b>3,959.90</b><br><span class="pc neg">-2.90%</span></td>
+          <td><span class="pill pos">+62.04%</span></td>
+          <td><span class="dv amb">31.51%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter SHORT on break of 1st 5-min candle Low (Low: &#8377;3,639.20) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's High)</span>.<br>
+              Weak close near low (3,925.10). Bearish grip confirmed with 31.5% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (1st 5m range: 6.11% &gt; 2.0% threshold)</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#3</span> <b>BEL</b><br><span style="font-size:9.5px;color:#ff7799">Long Unwinding</span></td>
+          <td><b>395.10</b><br><span class="pc neg">-0.73%</span></td>
+          <td><span class="pill neg">-3.23%</span></td>
+          <td><span class="dv pos">56.41%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter SHORT on break of 1st 5-min candle Low (Low: &#8377;385.55) &middot; <span style='color:#ff9999'>SL: &#8377;391.90 (Day's High)</span>.<br>
+              Weak close near low (393.50). Bearish grip confirmed with 56.4% delivery.<br>
+              <span class="pnl-tag pnl-loss">&#128308; P&amp;L (&#8377;-819.1 / -8.23% on &#8377;9,947 margin) &nbsp;&middot;&nbsp; 5X Qty: 129 Shorted @ &#8377;385.6 (Exposure: &#8377;49,736) &nbsp;&middot;&nbsp; &#128721; SL Hit @ &#8377;391.9 (Day's High)</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#4</span> <b>BHARATFORG</b><br><span style="font-size:9.5px;color:#ff7799">Fresh Short</span></td>
+          <td><b>1,753.00</b><br><span class="pc neg">-3.30%</span></td>
+          <td><span class="pill pos">+18.39%</span></td>
+          <td><span class="dv amb">34.72%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter SHORT on break of 1st 5-min candle Low (Low: &#8377;1,683.50) &middot; <span style='color:#ff9999'>SL: &#8377;0.00 (Day's High)</span>.<br>
+              Weak close near low (1,740.00). Bearish grip confirmed with 34.7% delivery.<br>
+              <span class="pnl-tag pnl-eratic">&#9888; Filtered Out (1st 5m range: 3.15% &gt; 2.0% threshold)</span>
+            </div>
+          </td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#5</span> <b>GAIL</b><br><span style="font-size:9.5px;color:#ff7799">Long Unwinding</span></td>
+          <td><b>185.99</b><br><span class="pc neg">-0.12%</span></td>
+          <td><span class="pill neg">-4.60%</span></td>
+          <td><span class="dv pos">65.67%</span></td>
+          <td>
+            <div class="plan-note">
+              <b>Setup:</b> Enter SHORT on break of 1st 5-min candle Low (Low: &#8377;183.52) &middot; <span style='color:#ff9999'>SL: &#8377;186.66 (Day's High)</span>.<br>
+              Weak close near low (184.68). Bearish grip confirmed with 65.7% delivery.<br>
+              <span class="pnl-tag pnl-notrig">&#9203; Not triggered (Did not break 1st candle Low &#8377;183.52) &middot; SL: &#8377;186.66 (Day's High)</span>
+            </div>
+          </td>
+        </tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+<div class="rules-container">
+      <div class="rules-title">&#128161; Quick Trading Rules of Thumb (Next Day Execution)</div>
+      <div class="rules-grid">
+        <div class="rule-box">
+          <b>1. The 15-Minute Rule for Longs</b>
+          <p>For BUY candidates, verify the stock trades <b>above previous day's Close</b> in the first 15 mins. Enter only when the initial 15-min high is cleared.</p>
+        </div>
+        <div class="rule-box">
+          <b>2. The Breakdown Rule for Shorts</b>
+          <p>For SELL candidates, confirm the stock opens <b>below previous Close / VWAP</b>. Enter on pullbacks failing at resistance or on breaking day's low.</p>
+        </div>
+        <div class="rule-box">
+          <b>3. Institutional Delivery Threshold</b>
+          <p>Delivery <b>&ge; 50%</b> signifies genuine institutional accumulation/distribution. If Delivery is <b>&lt; 30%</b>, treat the move strictly as an intraday scalping trade.</p>
+        </div>
+        <div class="rule-box">
+          <b>4. OI &amp; Price Alignment Check</b>
+          <p>Never fight OI buildup: Rising Price + Rising OI = Smart money Long. Falling Price + Rising OI = Aggressive Bears in charge.</p>
+        </div>
+      </div>
+    </div>
+</div>
+
+<!-- TAB 2: CAPITAL & DAY'S P&L TRACKER (NEW) -->
+<div id="pnl-tab" class="tab-content">
+
+<!-- LIVE REFRESH CONTROL BAR -->
+<div class="live-bar" id="live-bar">
+  <span class="live-dot" id="live-dot"></span>
+  <span class="live-status" id="live-status">Static snapshot — click Auto-Refresh or Refresh Now to get live prices</span>
+  <button class="live-btn" id="live-toggle-btn" onclick="toggleAutoRefresh()">&#9654; Auto-Refresh</button>
+  <button class="live-refresh-btn" onclick="doLiveRefresh()">&#8635; Refresh Now</button>
+  <select class="live-interval-sel" id="live-interval-sel" onchange="onIntervalChange()">
+    <option value="15">Every 15s</option>
+    <option value="30" selected>Every 30s</option>
+    <option value="60">Every 1 min</option>
+    <option value="120">Every 2 min</option>
+  </select>
+  <span class="live-ts" id="live-ts"></span>
+  <span class="live-err" id="live-err"></span>
+</div>
+
+
+    <!-- HERO STATS STRIP -->
+    <div class="pnl-hero">
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Day's Net P&amp;L (5X Intraday MIS)</div>
+        <div class="pnl-kpi-val" id="hero-pnl-val" style="color:var(--red)">&#8377;-673.5</div>
+        <div class="pnl-kpi-sub">Overall ROI: <b id="hero-roi-val" style="color:var(--red)">-3.43%</b> on deployed margin</div>
+      </div>
+
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Margin Deployed / Exposure</div>
+        <div class="pnl-kpi-val" style="color:var(--blue)">&#8377;19,626.8</div>
+        <div class="pnl-kpi-sub">Total Market Exposure: <b style="color:#fff">&#8377;98,134</b> (5X Leverage)</div>
+      </div>
+
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Execution Rate (1st 5m Breakout)</div>
+        <div class="pnl-kpi-val" style="color:#fff">2 / 10 Triggered</div>
+        <div class="sub" style="font-size:10px;color:var(--muted);margin-top:4px">8 Kept safe (no false breakouts)</div>
+      </div>
+
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Win / Loss Ratio</div>
+        <div class="pnl-kpi-val"><span style="color:var(--green)">1 W</span> &nbsp;|&nbsp; <span style="color:var(--red)">1 L</span></div>
+        <div class="sub" style="font-size:10px;color:var(--muted);margin-top:4px">0 Breakeven</div>
+      </div>
+    </div>
+
+    <!-- ENTRY CONDITION & MARGIN HIGHLIGHT -->
+    <div class="rules-container" style="border-left-color:var(--blue);margin-bottom:12px">
+      <div class="rules-title">&#9889; 5X Intraday Margin Leverage, Opening Gap &amp; 1st 5m Candle ORB Rules</div>
+      <p style="font-size:11px;color:#c0c7dc;line-height:1.45">
+        &bull; <b>5X Intraday Leverage (MIS):</b> Each &#8377;10,000 allocated capital provides <b>&#8377;50,000 in buying power / trade exposure</b> (20% margin requirement).
+        <br>&bull; <b>Opening Price Alignment (Prev Close Check):</b>
+        <br>&nbsp;&nbsp;&ndash; <b>BUY Setups:</b> Price <i>must</i> open <b>&ge; Previous Day's Close</b> (confirms buyer aggression).
+        <br>&nbsp;&nbsp;&ndash; <b>SELL Setups:</b> Price <i>must</i> open <b>&le; Previous Day's Close</b> (confirms supply pressure).
+        <br>&bull; <b>Gap Exhaustion Rule (&gt; 2.5%):</b> Extreme runaway gaps (&gt; +2.5% gap-up for Buys or &lt; -2.5% gap-down for Sells) are disqualified due to exhaustion and instant mean-reversion risk.
+        <br>&bull; <b>Intraday ORB Trigger:</b> For Buys, enter strictly on <b>break of 1st 5m candle High (SL = Day's Low)</b>. For Sells, enter on <b>break of 1st 5m candle Low (SL = Day's High)</b>.
+        <br>&bull; <b>Erratic 2% Filter:</b> If the 1st 5-minute candle range exceeds <b>2.0% of the stock price</b>, the stock is automatically disqualified to avoid opening whip-saws.
+      </p>
+    </div>
+
+    <!-- TABLE AUDIT -->
+    <div class="sec" style="margin:0 10px 15px 10px">
+      <div class="sh" style="background:#131824">
+        <div>&#128221; Intraday Trade-by-Trade Performance Audit (5X Margin)</div>
+        <span class="badge" style="background:rgba(61,155,255,0.15);color:var(--blue)">5X Intraday MIS &middot; 1st 5m Breakout</span>
+      </div>
+      <div class="tw">
+        <table class="rec-tbl pnl-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Allocated Limit</th>
+              <th>Margin Used &amp; Exposure</th>
+              <th>Execution &amp; Trigger Details</th>
+              <th>Net P&amp;L (5X ROI)</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+          <td>#1 <b>COROMANDEL</b></td>
+          <td><span class="rank-badge rank-buy">BUY</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-COROMANDEL"><span style='color:var(--red)'>Gap Rule: Opened below prev close (-0.47%)</span></td>
+          <td id="pnl-COROMANDEL"><span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span></td>
+        </tr><tr>
+          <td>#2 <b>M&M</b></td>
+          <td><span class="rank-badge rank-buy">BUY</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-M&M"><span style='color:var(--yel)'>1st 5m range: 2.59% &gt; 2.0% limit</span></td>
+          <td id="pnl-M&M"><span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic Open)</span></td>
+        </tr><tr>
+          <td>#3 <b>HDFCAMC</b></td>
+          <td><span class="rank-badge rank-buy">BUY</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-HDFCAMC"><span style='color:var(--red)'>Gap Rule: Opened below prev close (-1.08%)</span></td>
+          <td id="pnl-HDFCAMC"><span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span></td>
+        </tr><tr>
+          <td>#4 <b>SUNPHARMA</b></td>
+          <td><span class="rank-badge rank-buy">BUY</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-SUNPHARMA"><span style='color:var(--red)'>Gap Rule: Opened below prev close (-0.45%)</span></td>
+          <td id="pnl-SUNPHARMA"><span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span></td>
+        </tr><tr>
+          <td>#5 <b>SONACOMS</b></td>
+          <td><span class="rank-badge rank-buy">BUY</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-SONACOMS"><span style='color:var(--red)'>Gap Rule: Opened below prev close (-0.97%)</span></td>
+          <td id="pnl-SONACOMS"><span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span></td>
+        </tr><tr>
+          <td>#6 <b>PIIND</b></td>
+          <td><span class="rank-badge rank-sell">SELL</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;9,679.6<br><span style='font-size:9.5px;color:var(--blue)'>Exp: &#8377;48,398</span></b></td>
+          <td id="exec-PIIND">5X Qty: <b>28</b> @ &#8377;1,728.5 &rarr; LTP: <span id="ltp-PIIND">&#8377;1,723.3</span><br><span style='font-size:9.5px;color:var(--muted)'>1st 5m Low (&#8377;1,728.5) Broken &middot; SL: &#8377;1,758.0 (Day's High)</span></td>
+          <td id="pnl-PIIND"><span id="pnl-PIIND" class="pc pos">+&#8377;145.6 (+1.50%)</span></td>
+        </tr><tr>
+          <td>#7 <b>DATAPATTNS</b></td>
+          <td><span class="rank-badge rank-sell">SELL</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-DATAPATTNS"><span style='color:var(--yel)'>1st 5m range: 6.11% &gt; 2.0% limit</span></td>
+          <td id="pnl-DATAPATTNS"><span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic Open)</span></td>
+        </tr><tr>
+          <td>#8 <b>BEL</b></td>
+          <td><span class="rank-badge rank-sell">SELL</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;9,947.2<br><span style='font-size:9.5px;color:var(--blue)'>Exp: &#8377;49,736</span></b></td>
+          <td id="exec-BEL">5X Qty: <b>129</b> @ &#8377;385.6 &rarr; <b style='color:var(--red)'>&#128721; SL Hit @ &#8377;391.9</b><br><span style='font-size:9.5px;color:var(--muted)'>1st 5m Low (&#8377;385.6) Broken &middot; SL: &#8377;391.9 (Day's High)</span></td>
+          <td id="pnl-BEL"><span id="pnl-BEL" class="pc neg">&#8377;-819.1 (-8.23%)</span></td>
+        </tr><tr>
+          <td>#9 <b>BHARATFORG</b></td>
+          <td><span class="rank-badge rank-sell">SELL</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-BHARATFORG"><span style='color:var(--yel)'>1st 5m range: 3.15% &gt; 2.0% limit</span></td>
+          <td id="pnl-BHARATFORG"><span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic Open)</span></td>
+        </tr><tr>
+          <td>#10 <b>GAIL</b></td>
+          <td><span class="rank-badge rank-sell">SELL</span></td>
+          <td>&#8377;10,000.00<br><span style='font-size:9px;color:var(--muted)'>5X = &#8377;50,000.00</span></td>
+          <td><b>&#8377;0</b></td>
+          <td id="exec-GAIL"><span style='color:var(--muted)'>Did not break 1st 5m Low &#8377;183.5 &middot; SL: &#8377;186.7 (Day's High)</span></td>
+          <td id="pnl-GAIL"><span class="neu">&#9203; Not Triggered</span></td>
+        </tr></tbody>
+        </table>
+      </div>
+    </div>
+    <!-- EMBEDDED TRADE DATA FOR LIVE JS REFRESH -->
+    <script id="live-trades-data" type="application/json">[{"symbol": "COROMANDEL", "side": "BUY", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 1910.3, "bar0_low": 1880.4}, {"symbol": "M&M", "side": "BUY", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 3212.1, "bar0_low": 3130.1}, {"symbol": "HDFCAMC", "side": "BUY", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 2619.1, "bar0_low": 2584.7}, {"symbol": "SUNPHARMA", "side": "BUY", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 1837.5, "bar0_low": 1814.7}, {"symbol": "SONACOMS", "side": "BUY", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 906.4, "bar0_low": 896.5}, {"symbol": "PIIND", "side": "SELL", "triggered": true, "entry_price": 1728.5, "qty": 28, "margin_used": 9679.6, "exposure": 48398.0, "pnl": 145.6, "pnl_pct": 1.5, "sl_price": 1758.0, "exit_price": 1723.3, "exit_reason": "LTP", "bar0_high": 1757.6, "bar0_low": 1728.5}, {"symbol": "DATAPATTNS", "side": "SELL", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 3876.1, "bar0_low": 3639.2}, {"symbol": "BEL", "side": "SELL", "triggered": true, "entry_price": 385.55, "qty": 129, "margin_used": 9947.19, "exposure": 49735.95, "pnl": -819.15, "pnl_pct": -8.23, "sl_price": 391.9, "exit_price": 391.9, "exit_reason": "SL Hit", "bar0_high": 391.3, "bar0_low": 385.55}, {"symbol": "BHARATFORG", "side": "SELL", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 0.0, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 1737.5, "bar0_low": 1683.5}, {"symbol": "GAIL", "side": "SELL", "triggered": false, "entry_price": 0.0, "qty": 0, "margin_used": 0.0, "exposure": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "sl_price": 186.66, "exit_price": 0.0, "exit_reason": "LTP", "bar0_high": 185.41, "bar0_low": 183.52}]</script>
+    
+</div>
+
+<!-- TAB 3: HISTORIC 1-WEEK ANALYSIS -->
+<div id="historic-tab" class="tab-content">
+
+    <div class="hist-summary">
+      <div class="hist-stat">
+        <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Analysis Window</span>
+        <div class="val" style="color:var(--blue)">28 Oct &rarr; 04 Nov 2026</div>
+        <div class="sub">5 Completed Trading Sessions</div>
+      </div>
+      <div class="hist-stat">
+        <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Weekly Market Breadth</span>
+        <div class="val"><span style="color:var(--green)">69 Longs</span> &nbsp;|&nbsp; <span style="color:var(--red)">12 Shorts</span></div>
+        <div class="sub">Stocks with persistent OI expansion</div>
+      </div>
+      <div class="hist-stat">
+        <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Corporate Actions Filter</span>
+        <div class="val" style="color:var(--yel)">13 Filtered Out</div>
+        <div class="sub">Dividends / Bonus / Splits excluded</div>
+      </div>
+    </div>
+
+    <div class="trade-deck">
+      <div class="rec-card rec-buy">
+        <div class="rec-hdr">
+          <div>&#127942; Top 5 Weekly High-Conviction BUYS (Ranked)</div>
+          <span style="font-size:9px;color:#00ff9d;background:rgba(0,255,157,0.12);padding:2px 6px;border-radius:4px">1-Week Trend</span>
+        </div>
+        <div class="tw">
+          <table class="rec-tbl hist-table">
+            <thead>
+              <tr><th>Stock</th><th>Current Close</th><th>1-Wk Price%</th><th>Total OI</th><th>1-Wk OI%</th><th>Avg Deliv%</th><th>Swing Plan</th></tr>
+            </thead>
+            <tbody><tr>
+          <td><span class="rank-badge rank-buy">#1</span> <b>COROMANDEL</b></td>
+          <td><b>1,837.00</b></td>
+          <td><span class="pc pos">+7.84%</span></td>
+          <td>141,300</td>
+          <td><span class="pill pos">+842.00%</span></td>
+          <td><span class="dv pos">50.91%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Strong persistent accumulation over the week with 50.91% avg delivery. Prime candidate for swing / positional longs.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#2</span> <b>DATAPATTNS</b></td>
+          <td><b>4,078.00</b></td>
+          <td><span class="pc pos">+2.33%</span></td>
+          <td>214,375</td>
+          <td><span class="pill pos">+388.60%</span></td>
+          <td><span class="dv neg">23.95%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Strong persistent accumulation over the week with 23.95% avg delivery. Prime candidate for swing / positional longs.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#3</span> <b>MAXHEALTH</b></td>
+          <td><b>927.15</b></td>
+          <td><span class="pc pos">+8.88%</span></td>
+          <td>15,063,825</td>
+          <td><span class="pill pos">+11.73%</span></td>
+          <td><span class="dv pos">63.07%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Strong persistent accumulation over the week with 63.07% avg delivery. Prime candidate for swing / positional longs.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#4</span> <b>BHARTIARTL</b></td>
+          <td><b>2,067.60</b></td>
+          <td><span class="pc pos">+6.13%</span></td>
+          <td>51,716,100</td>
+          <td><span class="pill neg">-8.03%</span></td>
+          <td><span class="dv pos">71.94%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Strong persistent accumulation over the week with 71.94% avg delivery. Prime candidate for swing / positional longs.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-buy">#5</span> <b>KOTAKBANK</b></td>
+          <td><b>459.40</b></td>
+          <td><span class="pc pos">+4.41%</span></td>
+          <td>149,490,000</td>
+          <td><span class="pill neg">-2.25%</span></td>
+          <td><span class="dv pos">70.00%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Strong persistent accumulation over the week with 70.0% avg delivery. Prime candidate for swing / positional longs.</div></td>
+        </tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="rec-card rec-sell">
+        <div class="rec-hdr">
+          <div>&#9888; Top 5 Weekly High-Conviction SELLS (Ranked)</div>
+          <span style="font-size:9px;color:#ff7799;background:rgba(255,119,153,0.12);padding:2px 6px;border-radius:4px">1-Week Breakdown</span>
+        </div>
+        <div class="tw">
+          <table class="rec-tbl hist-table">
+            <thead>
+              <tr><th>Stock</th><th>Current Close</th><th>1-Wk Price%</th><th>Total OI</th><th>1-Wk OI%</th><th>Avg Deliv%</th><th>Swing Plan</th></tr>
+            </thead>
+            <tbody><tr>
+          <td><span class="rank-badge rank-sell">#1</span> <b>KARURVYSYA</b></td>
+          <td><b>343.90</b></td>
+          <td><span class="pc neg">-1.80%</span></td>
+          <td>1,891,000</td>
+          <td><span class="pill pos">+1,029.63%</span></td>
+          <td><span class="dv amb">49.45%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Persistent institutional selling / supply overhang over the past week. High probability continuation sell.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#2</span> <b>SYRMA</b></td>
+          <td><b>1,512.60</b></td>
+          <td><span class="pc neg">-3.22%</span></td>
+          <td>1,749,475</td>
+          <td><span class="pill pos">+543.90%</span></td>
+          <td><span class="dv neg">29.11%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Persistent institutional selling / supply overhang over the past week. High probability continuation sell.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#3</span> <b>CUB</b></td>
+          <td><b>213.50</b></td>
+          <td><span class="pc neg">-0.70%</span></td>
+          <td>5,487,000</td>
+          <td><span class="pill pos">+369.18%</span></td>
+          <td><span class="dv amb">38.93%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Persistent institutional selling / supply overhang over the past week. High probability continuation sell.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#4</span> <b>SWIGGY</b></td>
+          <td><b>178.89</b></td>
+          <td><span class="pc neg">-2.51%</span></td>
+          <td>81,374,900</td>
+          <td><span class="pill pos">+23.44%</span></td>
+          <td><span class="dv amb">42.92%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Persistent institutional selling / supply overhang over the past week. High probability continuation sell.</div></td>
+        </tr><tr>
+          <td><span class="rank-badge rank-sell">#5</span> <b>PNBHOUSING</b></td>
+          <td><b>1,082.00</b></td>
+          <td><span class="pc neg">-3.57%</span></td>
+          <td>10,540,400</td>
+          <td><span class="pill pos">+11.88%</span></td>
+          <td><span class="dv amb">46.01%</span></td>
+          <td><div class="plan-note"><b>Multi-day Trend:</b> Persistent institutional selling / supply overhang over the past week. High probability continuation sell.</div></td>
+        </tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    
+</div>
+
+<div class="foot">
+  Data source: NSE Bhavcopy (Real OI) &nbsp;|&nbsp;
+  NSE F&amp;O Bhavcopy (official EOD data) &nbsp;|&nbsp;
+  Re-run <b>fetch_oi_data.py</b> after 4:00 PM to get latest figures
+</div>
+
+<script>
+function openTab(tabId, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById(tabId).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── LIVE P&L REFRESH ENGINE ──────────────────────────────────────────────────
+var _liveTimer = null;
+var _liveActive = false;
+
+function fmtINR(n) {
+  // Format number Indian style
+  if (isNaN(n)) return n;
+  var neg = n < 0; n = Math.abs(n);
+  var s = n.toFixed(2);
+  var parts = s.split('.');
+  var intPart = parts[0], dec = parts[1];
+  var last3 = intPart.slice(-3);
+  var rest = intPart.slice(0, -3);
+  if (rest) rest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + last3;
+  else rest = last3;
+  return (neg ? '-' : '') + rest + '.' + dec;
+}
+
+function doLiveRefresh() {
+  var tradesRaw = document.getElementById('live-trades-data');
+  if (!tradesRaw) { setErr('No trade data embedded. Re-run fetch_oi_data.py.'); return; }
+  var trades;
+  try { trades = JSON.parse(tradesRaw.textContent); } catch(e) { setErr('Parse error: ' + e); return; }
+
+  var triggered = trades.filter(function(t){ return t.triggered; });
+  if (!triggered.length) { setErr('No triggered trades to update.'); return; }
+
+  var symbols = triggered.map(function(t){ return t.symbol + '.NS'; }).join(',');
+  var url = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(symbols);
+
+  setStatus('Fetching live prices…', false);
+  fetch(url, {signal: AbortSignal.timeout(8000)})
+    .then(function(r){
+      if (!r.ok) throw new Error('Server error ' + r.status);
+      return r.json();
+    })
+    .then(function(prices){
+      applyLivePrices(trades, prices);
+      var now = new Date().toLocaleTimeString('en-IN');
+      setStatus('&#128994; Live — updated ' + now, true);
+      document.getElementById('live-ts').textContent = '';
+      document.getElementById('live-err').textContent = '';
+    })
+    .catch(function(e){
+      setErr('&#9888; Cannot reach live server. Run: python live_server.py');
+      setStatus('Static snapshot', false);
+    });
+}
+
+function applyLivePrices(trades, prices) {
+  var totalPnl = 0;
+  var totalMargin = 0;
+
+  trades.forEach(function(t) {
+    if (!t.triggered) return;
+    var sym = t.symbol;
+    var ltp = prices[sym];
+    if (!ltp || isNaN(ltp)) return;
+
+    // Recalculate P&L
+    var qty = t.qty;
+    var entry = t.entry_price;
+    var pnl, exitPrice;
+
+    // Check if SL was already hit (locked)
+    if (t.exit_reason === 'SL Hit') {
+      pnl = t.pnl; // keep original locked SL P&L
+      exitPrice = t.exit_price;
+    } else {
+      exitPrice = ltp;
+      pnl = t.side === 'BUY' ? (ltp - entry) * qty : (entry - ltp) * qty;
+    }
+
+    var margin = t.margin_used;
+    var pnlPct = margin > 0 ? (pnl / margin * 100) : 0;
+    totalPnl += pnl;
+    totalMargin += margin;
+
+    // Update LTP cell
+    var ltpEl = document.getElementById('ltp-' + sym);
+    if (ltpEl) ltpEl.textContent = '&#8377;' + fmtINR(ltp);
+
+    // Update P&L cell
+    var pnlEl = document.getElementById('pnl-' + sym);
+    if (pnlEl) {
+      var sign = pnl >= 0 ? '+' : '';
+      pnlEl.className = 'pc ' + (pnl >= 0 ? 'pos' : 'neg');
+      pnlEl.innerHTML = sign + '&#8377;' + fmtINR(pnl) + ' (' + sign + fmtINR(pnlPct) + '%)';
+    }
+  });
+
+  // Update hero KPI
+  var heroEl = document.getElementById('hero-pnl-val');
+  if (heroEl) {
+    var sign = totalPnl >= 0 ? '+' : '';
+    heroEl.style.color = totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+    heroEl.innerHTML = sign + '&#8377;' + fmtINR(totalPnl);
+  }
+  var heroRoi = document.getElementById('hero-roi-val');
+  if (heroRoi && totalMargin > 0) {
+    var roi = totalPnl / totalMargin * 100;
+    var sign = roi >= 0 ? '+' : '';
+    heroRoi.style.color = roi >= 0 ? 'var(--green)' : 'var(--red)';
+    heroRoi.textContent = sign + fmtINR(roi) + '%';
+  }
+}
+
+function toggleAutoRefresh() {
+  _liveActive = !_liveActive;
+  var btn = document.getElementById('live-toggle-btn');
+  var dot = document.getElementById('live-dot');
+  if (_liveActive) {
+    btn.textContent = '&#9646;&#9646; Stop Auto-Refresh';
+    btn.className = 'live-btn on';
+    dot.className = 'live-dot on';
+    doLiveRefresh();
+    scheduleNext();
+  } else {
+    clearTimeout(_liveTimer);
+    btn.innerHTML = '&#9654; Auto-Refresh';
+    btn.className = 'live-btn';
+    dot.className = 'live-dot';
+    setStatus('Auto-refresh paused', false);
+  }
+}
+
+function scheduleNext() {
+  if (!_liveActive) return;
+  var sel = document.getElementById('live-interval-sel');
+  var secs = parseInt(sel ? sel.value : 30) * 1000;
+  _liveTimer = setTimeout(function(){ doLiveRefresh(); scheduleNext(); }, secs);
+}
+
+function onIntervalChange() {
+  if (_liveActive) { clearTimeout(_liveTimer); scheduleNext(); }
+}
+
+function setStatus(msg, live) {
+  var el = document.getElementById('live-status');
+  if (el) el.innerHTML = msg;
+  var dot = document.getElementById('live-dot');
+  if (dot && !_liveActive) dot.className = live ? 'live-dot on' : 'live-dot';
+}
+
+function setErr(msg) {
+  var el = document.getElementById('live-err');
+  if (el) el.innerHTML = msg;
+}
+</script>
+</body>
+</html>

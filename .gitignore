@@ -1,0 +1,16 @@
+# Python & runtime
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Data caches (do not push large zip/csv bhavcopy archives)
+.bhavcopy_cache/
+*.zip
+*.csv
+
+# Temporary test/scratch files
+scratch/
+*.log
