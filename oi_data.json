@@ -118,17 +118,17 @@
       "deliv_pct": 66.51
     },
     {
-      "symbol": "CAMS",
-      "last_close": 711.15,
-      "open": 715.0,
-      "high": 746.15,
-      "low": 715.0,
-      "close": 723.5,
-      "price_chg": 1.74,
-      "oi": 10026225,
-      "oi_chg": 532950,
-      "oi_chg_pct": 5.61,
-      "deliv_pct": 55.84
+      "symbol": "ONGC",
+      "last_close": 233.5,
+      "open": 235.0,
+      "high": 236.0,
+      "low": 233.8,
+      "close": 234.8,
+      "price_chg": 0.56,
+      "oi": 72693000,
+      "oi_chg": 4106250,
+      "oi_chg_pct": 5.99,
+      "deliv_pct": 72.1
     }
   ],
   "fresh_shorts": [
