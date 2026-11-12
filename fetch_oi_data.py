@@ -362,6 +362,14 @@ def build_rows(analysis_date):
         # Ignore stocks with corporate action price adjustments (dividends, bonus, splits, rights)
         if sym in ca_exclusions:
             ignored_daily_count += 1
+            try:
+                import db_store
+                db_store.log_trade_exception(
+                    analysis_date.strftime("%Y-%m-%d"), sym,
+                    "OI_SELECTION", "CORPORATE_ACTION", ca_exclusions[sym]
+                )
+            except Exception:
+                pass
             continue
 
         if sym not in prices and sym not in oi_today:
@@ -404,6 +412,12 @@ def build_rows(analysis_date):
         })
 
     print(f"[OK] Built {len(rows)} rows.")
+    try:
+        import db_store
+        saved_oi = db_store.save_daily_oi(analysis_date.strftime("%Y-%m-%d"), rows)
+        print(f"[DB] Saved {saved_oi} daily_oi rows for {analysis_date}.")
+    except Exception as e:
+        print(f"[warn] DB daily_oi save failed: {e}")
     return rows, analysis_date.strftime("%d %b %Y")
 
 # ─── CLASSIFY ────────────────────────────────────────────────────────────────
@@ -1266,12 +1280,13 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
                     filtered = [b for b in tv_bars if datetime.fromtimestamp(b["time"]).strftime("%Y-%m-%d") == last_day]
                 if filtered:
                     results[s] = {
-                        "valid": True,
-                        "open":  [b["open"]  for b in filtered],
-                        "high":  [b["high"]  for b in filtered],
-                        "low":   [b["low"]   for b in filtered],
-                        "close": [b["close"] for b in filtered],
-                        "times": [datetime.fromtimestamp(b["time"]).strftime("%H:%M") for b in filtered],
+                        "valid":  True,
+                        "open":   [b["open"]  for b in filtered],
+                        "high":   [b["high"]  for b in filtered],
+                        "low":    [b["low"]   for b in filtered],
+                        "close":  [b["close"] for b in filtered],
+                        "volume": [b.get("volume", 0.0) for b in filtered],
+                        "times":  [datetime.fromtimestamp(b["time"]).strftime("%H:%M") for b in filtered],
                     }
                     got_data = True
                     break
@@ -1311,6 +1326,24 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
                 }
         except Exception:
             pass
+
+    # Persist 5m candles + any missing symbol exceptions into SQLite
+    if target_dt_str:
+        try:
+            import db_store
+            saved_bars = 0
+            for sym_k, b_data in results.items():
+                saved_bars += db_store.save_intraday_candles(target_dt_str, sym_k, b_data)
+            for ms in missing_symbols:
+                if ms not in results:
+                    db_store.log_trade_exception(
+                        target_dt_str, ms, "CANDLE_FETCH", "NO_CANDLE_DATA",
+                        "Neither TradingView nor yfinance returned 5m bars"
+                    )
+            if saved_bars:
+                print(f"[DB] Saved {saved_bars} 5m candles for {target_dt_str}.")
+        except Exception as e:
+            print(f"[warn] DB candle save failed: {e}")
 
     return results
 
@@ -1910,6 +1943,25 @@ def record_trades_to_journal(executed_trades, session_date_str):
 
     if updated:
         save_trade_journal(journal)
+
+    # Persist executions & filter exceptions to SQLite database
+    try:
+        import db_store
+        db_store.save_trade_executions(session_date_str, executed_trades)
+        for t in executed_trades:
+            if t.get("gap_filtered"):
+                db_store.log_trade_exception(
+                    session_date_str, t["symbol"], "ORB_FILTER", "GAP_FILTER",
+                    f"side={t.get('side')} gap_pct={t.get('gap_pct', 0)}%"
+                )
+            elif t.get("erratic_filtered"):
+                db_store.log_trade_exception(
+                    session_date_str, t["symbol"], "ORB_FILTER", "ERRATIC_2PCT",
+                    f"side={t.get('side')} bar0_range_pct={t.get('bar0_range_pct', 0)}%"
+                )
+    except Exception as e:
+        print(f"[warn] DB trade execution save failed: {e}")
+
     return journal
 
 def build_journal_tab(journal):
