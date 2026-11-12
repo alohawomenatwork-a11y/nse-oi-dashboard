@@ -2,15 +2,8 @@ name: Daily NSE OI & Trade Performance Tracker
 
 on:
   schedule:
-    # Multiple attempts Mon-Fri after NSE market close:
-    # 1. 3:45 PM IST (10:15 UTC) - Initial attempt after 3:30 close
-    # 2. 4:15 PM IST (10:45 UTC) - Standard NSE Bhavcopy publication window
-    # 3. 4:45 PM IST (11:15 UTC) - Secondary fallback retry if delayed
-    # 4. 5:30 PM IST (12:00 UTC) - Final evening sweep
-    - cron: '15 10 * * 1-5'
-    - cron: '45 10 * * 1-5'
-    - cron: '15 11 * * 1-5'
-    - cron: '0 12 * * 1-5'
+    # Single daily run Mon-Fri at 4:30 PM IST (11:00 UTC) after NSE Bhavcopy is published
+    - cron: '0 11 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -38,9 +31,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests yfinance pandas websocket-client
 
-      - name: Run EOD OI analysis with Bhavcopy retry mechanism
+      - name: Run EOD OI analysis
         run: |
-          python fetch_oi_data.py --wait-for-bhavcopy
+          python fetch_oi_data.py
 
       - name: Archive daily snapshot & update index
         run: |
