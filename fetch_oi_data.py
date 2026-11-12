@@ -2000,16 +2000,32 @@ def build_journal_tab(journal):
             row_class = "journal-row-exec" if t["triggered"] else "journal-row-unexec"
 
             if t["triggered"]:
+                now_ist = datetime.now()
+                is_live_intraday = (t.get("date") == now_ist.strftime("%Y-%m-%d")) and (now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 10))
                 sign = "+" if t["pnl"] >= 0 else ""
                 pnl_cls = "pos" if t["pnl"] >= 0 else "neg"
                 pnl_cell = f'<span class="pc {pnl_cls}">{sign}&#8377;{fmt(t["pnl"], 1)} ({sign}{fmt(t["pnl_pct"], 2)}%)</span>'
-                status_txt = f'<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>' if t.get("exit_reason") == "SL Hit" else '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>'
-                details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
+                if t.get("exit_reason") == "SL Hit":
+                    status_txt = f'<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>'
+                    details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
+                elif is_live_intraday:
+                    status_txt = '<span style="color:var(--blue);font-weight:700">&#128994; In Trade</span>'
+                    details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; LTP: &#8377;{fmt(t.get('exit_price',0),1)} (Live)"
+                else:
+                    status_txt = '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>'
+                    details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
                 risk_cell = f"<span style='color:#ff7799'>&#8377;{fmt(t.get('risk_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--muted)'>({t.get('risk_pct',0)}% risk)</span></span>"
                 max_prof_cell = f"<span style='color:var(--green);font-weight:700'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--green)'>({t.get('max_profit_pct',0)}% peak)</span></span>"
                 sign_1to1 = "+" if t.get("pnl_1to1", 0.0) >= 0 else ""
                 cls_1to1 = "pos" if t.get("pnl_1to1", 0.0) >= 0 else "neg"
-                hit_note = f"<span style='font-size:9.5px;color:var(--green)'>&#10004; Hit @ {t.get('target_1to1_time')}</span>" if t.get("target_1to1_hit") else ("<span style='font-size:9.5px;color:var(--red)'>&#10006; Stopped Out</span>" if t.get("exit_reason") == "SL Hit" else "<span style='font-size:9.5px;color:var(--yel)'>&#9200; 3:10 PM Squareoff</span>")
+                if t.get("target_1to1_hit"):
+                    hit_note = f"<span style='font-size:9.5px;color:var(--green)'>&#10004; Hit @ {t.get('target_1to1_time')}</span>"
+                elif t.get("exit_reason") == "SL Hit":
+                    hit_note = "<span style='font-size:9.5px;color:var(--red)'>&#10006; Stopped Out</span>"
+                elif is_live_intraday:
+                    hit_note = "<span style='font-size:9.5px;color:var(--blue)'>&#128994; In Trade</span>"
+                else:
+                    hit_note = "<span style='font-size:9.5px;color:var(--yel)'>&#9200; 3:10 PM Squareoff</span>"
                 pnl_1to1_cell = f'<span class="pc {cls_1to1}">{sign_1to1}&#8377;{fmt(t.get("pnl_1to1",0), 1)} ({sign_1to1}{fmt(t.get("pnl_1to1_pct",0), 2)}%)</span><br>{hit_note}'
             elif t.get("gap_filtered"):
                 pnl_cell = '<span class="neu">&#8377;0.00</span>'
