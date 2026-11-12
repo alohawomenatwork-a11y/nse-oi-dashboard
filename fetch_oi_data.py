@@ -328,11 +328,14 @@ def build_rows(analysis_date):
 
     print(f"\n[*] Analysis date : {analysis_date.strftime('%d %b %Y')}")
 
-    # --- F&O bhavcopy for today & yesterday (for OI change) ---
+    # --- F&O bhavcopy for today & yesterday (for OI change, skipping NSE holidays) ---
     print("[*] Downloading F&O bhavcopies...")
     fo_today = download_fo_bhavcopy(session, analysis_date)
-    prev_days = prev_trading_days(analysis_date, n=1)
-    fo_prev   = download_fo_bhavcopy(session, prev_days[0]) if prev_days else None
+    fo_prev = None
+    for prev_d in prev_trading_days(analysis_date, n=5):
+        fo_prev = download_fo_bhavcopy(session, prev_d)
+        if fo_prev is not None:
+            break
 
     oi_today = parse_fo_oi(fo_today)
     oi_prev  = parse_fo_oi(fo_prev)
@@ -1856,9 +1859,13 @@ def record_trades_to_journal(executed_trades, session_date_str):
     Ensures no duplicate entries for the same date and symbol.
     """
     journal = load_trade_journal()
-    existing_keys = {f"{t.get('date')}_{t.get('symbol')}" for t in journal}
-
-    updated = False
+    new_syms = {t.get("symbol") for t in executed_trades if t.get("symbol")}
+    if new_syms:
+        before_len = len(journal)
+        journal = [item for item in journal if not (item.get("date") == session_date_str and item.get("symbol") not in new_syms)]
+        updated = len(journal) != before_len
+    else:
+        updated = False
     for t in executed_trades:
         key = f"{session_date_str}_{t.get('symbol')}"
         record = {
