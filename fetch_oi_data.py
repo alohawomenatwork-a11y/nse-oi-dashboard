@@ -10,7 +10,23 @@ Usage:
     python fetch_oi_data.py 2026-11-04   # specific date (YYYY-MM-DD)
 """
 
-import os, sys, io, zipfile, json, time, random
+import argparse
+import os
+import sys
+import json
+import time
+import zipfile
+import io
+import random
+
+parser = argparse.ArgumentParser(description='Fetch OI data and optionally verify trades')
+parser.add_argument('--verify-from', type=str, help='YYYY-MM-DD start date to re‑verify trades')
+parser.add_argument('--date', type=str, help='Specific date (YYYY-MM-DD) to process')
+args, unknown = parser.parse_known_args()
+# If a specific date is supplied, limit fetch to that day
+specific_date = args.date
+verify_start = args.verify_from
+
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, date
@@ -1209,6 +1225,23 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
     If target_date (str YYYY-MM-DD or date object) is provided, extracts that specific session's bars.
     """
     from tv_candles import fetch_tv_candles
+
+    # TradingView symbol name map for NSE tickers with special characters
+    TV_SYMBOL_MAP = {
+        "BAJAJ-AUTO": "BAJAJ_AUTO",
+        "M&M":        "M_M",
+        "M&MFIN":     "M_MFIN",
+        "L&TFH":      "L_TFH",
+    }
+
+    def _tv_sym_variants(s):
+        mapped = TV_SYMBOL_MAP.get(s)
+        variants = [mapped, s] if mapped else [s]
+        alt = s.replace("-", "_").replace("&", "")
+        if alt not in variants:
+            variants.append(alt)
+        return variants
+
     target_dt_str = target_date.strftime("%Y-%m-%d") if isinstance(target_date, (date, datetime)) else target_date
 
     print(f"[*] Fetching 5-minute intraday candles from TradingView for {len(symbols)} candidates (Session: {target_dt_str or 'latest'})...")
@@ -1216,29 +1249,33 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
     missing_symbols = []
 
     for s in symbols:
-        try:
-            tv_bars = fetch_tv_candles(s, exchange="NSE", interval="5", n_bars=150)
-            if tv_bars:
+        got_data = False
+        for sym_try in _tv_sym_variants(s):
+            try:
+                tv_bars = fetch_tv_candles(sym_try, exchange="NSE", interval="5", n_bars=500)
+                if not tv_bars:
+                    continue
                 # Filter for target_date
                 if target_dt_str:
                     filtered = [b for b in tv_bars if datetime.fromtimestamp(b["time"]).strftime("%Y-%m-%d") == target_dt_str]
                 else:
                     last_day = datetime.fromtimestamp(tv_bars[-1]["time"]).strftime("%Y-%m-%d")
                     filtered = [b for b in tv_bars if datetime.fromtimestamp(b["time"]).strftime("%Y-%m-%d") == last_day]
-
                 if filtered:
                     results[s] = {
                         "valid": True,
-                        "open":  [b["open"] for b in filtered],
-                        "high":  [b["high"] for b in filtered],
-                        "low":   [b["low"] for b in filtered],
+                        "open":  [b["open"]  for b in filtered],
+                        "high":  [b["high"]  for b in filtered],
+                        "low":   [b["low"]   for b in filtered],
                         "close": [b["close"] for b in filtered],
                         "times": [datetime.fromtimestamp(b["time"]).strftime("%H:%M") for b in filtered],
                     }
-                    continue
-        except Exception as e:
-            pass
-        missing_symbols.append(s)
+                    got_data = True
+                    break
+            except Exception:
+                pass
+        if not got_data:
+            missing_symbols.append(s)
 
     # Fallback to yfinance only if TradingView missed any symbol
     if missing_symbols:
