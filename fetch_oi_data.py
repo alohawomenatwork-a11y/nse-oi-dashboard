@@ -345,6 +345,20 @@ def build_rows(analysis_date):
     eq_today  = download_eq_bhavcopy(session, analysis_date)
     prices    = parse_eq_prices(eq_today)
 
+    # Guard: if BOTH F&O and EQ bhavcopies are missing, it is an NSE holiday (or not published yet)
+    if fo_today is None and eq_today is None:
+        print(f"[info] Both F&O and EQ bhavcopies unavailable for {analysis_date} (NSE Holiday or not yet published). Skipping.")
+        try:
+            import db_store
+            db_store.log_trade_exception(
+                analysis_date.strftime("%Y-%m-%d"), "NSE", "MARKET_SESSION",
+                "TRADING_HOLIDAY_OR_UNPUBLISHED",
+                "Both F&O and EQ bhavcopies returned 404/None"
+            )
+        except Exception:
+            pass
+        return [], analysis_date.strftime("%d %b %Y")
+
     # --- Fetch Corporate Action exclusions for current session window ---
     ca_exclusions = fetch_corporate_action_exclusions(session, analysis_date - timedelta(days=2), analysis_date + timedelta(days=1))
     ignored_daily_count = 0
@@ -2350,8 +2364,8 @@ if __name__ == "__main__":
             time.sleep(retry_delay_sec)
 
     if not rows:
-        print("[error] No data could be fetched. Check internet connection or NSE server availability.")
-        sys.exit(1)
+        print(f"[info] Skipping dashboard generation for {analysis_date} (no NSE bhavcopy available — likely NSE holiday).")
+        sys.exit(0)
 
     data = classify(rows, as_of)
 
