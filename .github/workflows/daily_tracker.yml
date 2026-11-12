@@ -46,7 +46,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add dashboard.html index.html oi_data.json trade_history.json history/
+          git add dashboard.html index.html oi_data.json trade_history.json oi_trading.db history/
           git commit -m "chore(auto): daily OI & trades performance update [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 
