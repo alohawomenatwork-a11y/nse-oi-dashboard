@@ -2,8 +2,8 @@ name: Daily NSE OI & Trade Performance Tracker
 
 on:
   schedule:
-    # Single daily run Mon-Fri at 5:30 PM IST (12:00 UTC) after NSE Bhavcopy is published
-    - cron: '0 12 * * 1-5'
+    # Single daily run Mon-Fri at 5:17 PM IST (11:47 UTC, off-peak minute to avoid GitHub Actions queue delays)
+    - cron: '47 11 * * 1-5'
   workflow_dispatch:
 
 env:
