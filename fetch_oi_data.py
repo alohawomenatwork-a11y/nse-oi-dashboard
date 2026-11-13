@@ -2212,32 +2212,47 @@ def build_journal_tab(journal):
 
     <!-- WHAT-IF STRATEGY RULES SIMULATOR CONTROL BAR -->
     <div class="sec" style="margin:0 10px 15px 10px;padding:12px 16px;background:#101726;border:1px solid #23304c;border-radius:6px">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:13.5px;font-weight:700;color:#fff">&#9881;&#65039; Strategy Entry Rules &amp; What-If Simulator</span>
-          <span class="badge" style="background:rgba(0,196,122,0.15);color:var(--green)">Interactive Backtester</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:13.5px;font-weight:700;color:#fff">&#9881;&#65039; Strategy Mode:</span>
+          <div style="display:inline-flex;background:#0b0f19;border-radius:5px;border:1px solid #1c263c;padding:2px">
+            <button id="btn-mode-default" onclick="setJournalMode('default')" style="background:#1b2438;color:#00ff9d;border:none;padding:5px 12px;border-radius:4px;font-size:11.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px">
+              &#128737;&#65039; Default Strategy (Standard Baseline)
+            </button>
+            <button id="btn-mode-whatif" onclick="setJournalMode('whatif')" style="background:transparent;color:var(--muted);border:none;padding:5px 12px;border-radius:4px;font-size:11.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px">
+              &#129514; Custom What-If Simulator
+            </button>
+          </div>
         </div>
-        <div id="sim-status-summary" style="font-size:11px;color:var(--blue);font-weight:600">
-          Baseline Rules Active &middot; <b>{total_trades} Triggered</b> &middot; Net P&amp;L: <b>{pnl_sign}&#8377;{fmt(total_pnl, 1)}</b>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="sim-status-summary" style="font-size:11px;color:var(--green);font-weight:600">
+            &#9679; Default Strategy Active &middot; {total_trades} Executed &middot; Net P&amp;L: {pnl_sign}&#8377;{fmt(total_pnl, 1)}
+          </div>
+          <button id="btn-reset-rules" onclick="resetSimulatorToDefault()" style="display:none;background:#172033;color:var(--blue);border:1px solid #263553;padding:4px 9px;border-radius:4px;font-size:10.5px;cursor:pointer;font-weight:600">
+            &#8634; Reset to Default Settings
+          </button>
         </div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;padding:10px 14px;background:#0b0f19;border-radius:5px;border:1px solid #1c263c">
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: BUY must open above or equal to Prev Close, SELL must open below or equal to Prev Close">
-          <input type="checkbox" id="sim-rule-open-prev" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
-          <span><b>Rule 1: Open vs Prev Close</b> <span style="color:var(--muted);font-size:10.5px">(BUY &ge; Prev Close, SELL &le; Prev Close)</span></span>
-        </label>
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: Filter runaway gap-ups (> +2.5%) or panic gap-downs (< -2.5%)">
-          <input type="checkbox" id="sim-rule-extreme-gap" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
-          <span><b>Rule 2: Max Opening Gap</b> <span style="color:var(--muted);font-size:10.5px">(&le; 2.5% exhaustion cap)</span></span>
-        </label>
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: Filter stocks where 1st 5-minute candle range exceeds 2.0%">
-          <input type="checkbox" id="sim-rule-erratic" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
-          <span><b>Rule 3: 1st 5-Min Range</b> <span style="color:var(--muted);font-size:10.5px">(&le; 2.0% volatility cap)</span></span>
-        </label>
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11.5px;color:#00ff9d;margin-left:auto;border-left:1px solid #23304c;padding-left:16px">
-          <input type="checkbox" id="journal-exec-filter" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--green);cursor:pointer;width:15px;height:15px">
-          <span><b>Show Only Executed Trades</b></span>
-        </label>
+
+      <!-- Simulator Interactive Checkboxes (Visible only in What-If mode) -->
+      <div id="whatif-controls-panel" style="display:none;padding:10px 14px;background:#0b0f19;border-radius:5px;border:1px solid #1c263c;margin-top:6px">
+        <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px">
+          Toggle rules below to backtest alternative entry logic across all historical trades:
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: BUY must open above or equal to Prev Close, SELL must open below or equal to Prev Close">
+            <input type="checkbox" id="sim-rule-open-prev" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
+            <span><b>Rule 1: Open vs Prev Close</b> <span style="color:var(--muted);font-size:10.5px">(BUY &ge; Prev Close, SELL &le; Prev Close)</span></span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: Filter runaway gap-ups (> +2.5%) or panic gap-downs (< -2.5%)">
+            <input type="checkbox" id="sim-rule-extreme-gap" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
+            <span><b>Rule 2: Max Opening Gap</b> <span style="color:var(--muted);font-size:10.5px">(&le; 2.5% exhaustion cap)</span></span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: Filter stocks where 1st 5-minute candle range exceeds 2.0%">
+            <input type="checkbox" id="sim-rule-erratic" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
+            <span><b>Rule 3: 1st 5-Min Range</b> <span style="color:var(--muted);font-size:10.5px">(&le; 2.0% volatility cap)</span></span>
+          </label>
+        </div>
       </div>
     </div>
 
@@ -2245,7 +2260,11 @@ def build_journal_tab(journal):
     <div class="sec" style="margin:0 10px 15px 10px">
       <div class="sh" style="background:#131824;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>&#128220; Complete Trade Execution History &amp; Risk/Reward Journal</div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <label style="font-size:11px;color:#00ff9d;cursor:pointer;display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="journal-exec-filter" checked onchange="onFilterExecutedToggled(this.checked)" style="accent-color:var(--green);cursor:pointer;width:14px;height:14px">
+            <span><b>Show Only Executed Trades</b></span>
+          </label>
           <span class="badge" style="background:rgba(0,196,122,0.15);color:var(--green)">Permanent Audit Log</span>
         </div>
       </div>
@@ -2277,8 +2296,47 @@ def build_journal_tab(journal):
     const CURRENT_MINUTE = {datetime.now().minute};
     const IS_MARKET_HOURS = (CURRENT_HOUR < 15 || (CURRENT_HOUR === 15 && CURRENT_MINUTE < 10));
 
-    function filterJournalRows(onlyExec) {{
+    var CURRENT_JOURNAL_MODE = 'default';
+
+    function setJournalMode(mode) {{
+      CURRENT_JOURNAL_MODE = mode;
+      var btnDefault = document.getElementById('btn-mode-default');
+      var btnWhatIf = document.getElementById('btn-mode-whatif');
+      var panel = document.getElementById('whatif-controls-panel');
+      var btnReset = document.getElementById('btn-reset-rules');
+
+      if (mode === 'default') {{
+        if (btnDefault) {{ btnDefault.style.background = '#1b2438'; btnDefault.style.color = '#00ff9d'; }}
+        if (btnWhatIf) {{ btnWhatIf.style.background = 'transparent'; btnWhatIf.style.color = 'var(--muted)'; }}
+        if (panel) panel.style.display = 'none';
+        if (btnReset) btnReset.style.display = 'none';
+        renderDefaultAuditLog();
+      }} else {{
+        if (btnDefault) {{ btnDefault.style.background = 'transparent'; btnDefault.style.color = 'var(--muted)'; }}
+        if (btnWhatIf) {{ btnWhatIf.style.background = '#1b2438'; btnWhatIf.style.color = 'var(--blue)'; }}
+        if (panel) panel.style.display = 'block';
+        if (btnReset) btnReset.style.display = 'inline-block';
+        recomputeWhatIfSimulator();
+      }}
+    }}
+
+    function resetSimulatorToDefault() {{
+      var r1 = document.getElementById('sim-rule-open-prev'); if (r1) r1.checked = true;
+      var r2 = document.getElementById('sim-rule-extreme-gap'); if (r2) r2.checked = true;
+      var r3 = document.getElementById('sim-rule-erratic'); if (r3) r3.checked = true;
       recomputeWhatIfSimulator();
+    }}
+
+    function onFilterExecutedToggled(checked) {{
+      if (CURRENT_JOURNAL_MODE === 'default') {{
+        renderDefaultAuditLog();
+      }} else {{
+        recomputeWhatIfSimulator();
+      }}
+    }}
+
+    function filterJournalRows(onlyExec) {{
+      onFilterExecutedToggled(onlyExec);
     }}
 
     var _equityChartInstance = null;
@@ -2351,6 +2409,186 @@ def build_journal_tab(journal):
           }}
         }}
       }});
+    }}
+
+    function renderDefaultAuditLog() {{
+      var onlyExec = document.getElementById('journal-exec-filter') ? document.getElementById('journal-exec-filter').checked : true;
+      var trigTrades = [];
+      var wins = [];
+      var losses = [];
+      var totalMaxProfit = 0;
+      var dayMap = {{}};
+
+      HISTORIC_JOURNAL_DATA.forEach(function(t) {{
+        var d = t.date;
+        if (!dayMap[d]) {{
+          dayMap[d] = {{ total: 0, trig: 0, pnl: 0, pnl_1to1: 0, margin: 0 }};
+        }}
+        dayMap[d].total++;
+
+        var row = document.getElementById('trade-row-' + t.date + '-' + t.symbol);
+        var isLive = (t.date === TODAY_DATE_STR) && IS_MARKET_HOURS;
+
+        if (t.triggered) {{
+          dayMap[d].trig++;
+          dayMap[d].pnl += (t.pnl || 0.0);
+          dayMap[d].pnl_1to1 += (t.pnl_1to1 || 0.0);
+          dayMap[d].margin += (t.margin_used || 0.0);
+          trigTrades.push(t);
+          if (t.pnl > 0) wins.push(t);
+          else if (t.pnl < 0) losses.push(t);
+          totalMaxProfit += (t.max_profit_rupees || 0.0);
+
+          if (row) {{
+            row.className = 'journal-row-exec';
+            row.style.display = '';
+            var statusHtml = '';
+            var detailsHtml = '';
+            if (t.exit_reason === 'SL Hit') {{
+              statusHtml = '<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>';
+              detailsHtml = 'Trigger: <b>' + (t.trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.qty || 0) + '</b> @ &#8377;' + (t.entry_price || 0).toLocaleString('en-IN') + ' &rarr; Exit: &#8377;' + (t.exit_price || 0).toLocaleString('en-IN') + ' (' + (t.exit_time || '-') + ')';
+            }} else if (isLive) {{
+              statusHtml = '<span style="color:var(--blue);font-weight:700">&#128994; In Trade</span>';
+              detailsHtml = 'Trigger: <b>' + (t.trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.qty || 0) + '</b> @ &#8377;' + (t.entry_price || 0).toLocaleString('en-IN') + ' &rarr; LTP: &#8377;' + (t.exit_price || 0).toLocaleString('en-IN') + ' (Live)';
+            }} else {{
+              statusHtml = '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>';
+              detailsHtml = 'Trigger: <b>' + (t.trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.qty || 0) + '</b> @ &#8377;' + (t.entry_price || 0).toLocaleString('en-IN') + ' &rarr; Exit: &#8377;' + (t.exit_price || 0).toLocaleString('en-IN') + ' (' + (t.exit_time || '-') + ')';
+            }}
+
+            var pnlSign = t.pnl >= 0 ? '+' : '';
+            var pnlCls = t.pnl >= 0 ? 'pos' : 'neg';
+            var pnlCellHtml = '<span class="pc ' + pnlCls + '">' + pnlSign + '&#8377;' + (t.pnl || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + ' (' + pnlSign + (t.pnl_pct || 0).toFixed(2) + '%)</span>';
+
+            var sign1to1 = (t.pnl_1to1 || 0) >= 0 ? '+' : '';
+            var cls1to1 = (t.pnl_1to1 || 0) >= 0 ? 'pos' : 'neg';
+            var hitNote = '';
+            if (t.target_1to1_hit) hitNote = '<span style="font-size:9.5px;color:var(--green)">&#10004; Hit @ ' + (t.target_1to1_time || '-') + '</span>';
+            else if (t.exit_reason === 'SL Hit') hitNote = '<span style="font-size:9.5px;color:var(--red)">&#10006; Stopped Out</span>';
+            else if (isLive) hitNote = '<span style="font-size:9.5px;color:var(--blue)">&#128994; In Trade</span>';
+            else hitNote = '<span style="font-size:9.5px;color:var(--yel)">&#9200; 3:10 PM Squareoff</span>';
+
+            var pnl1to1Html = '<span class="pc ' + cls1to1 + '">' + sign1to1 + '&#8377;' + (t.pnl_1to1 || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + ' (' + sign1to1 + (t.pnl_1to1_pct || 0).toFixed(2) + '%)</span><br>' + hitNote;
+            var riskHtml = '<span style="color:#ff7799">&#8377;' + (t.risk_rupees || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '<br><span style="font-size:9.5px;color:var(--muted)">(' + (t.risk_pct || 0).toFixed(1) + '% risk)</span></span>';
+            var maxProfHtml = '<span style="color:var(--green);font-weight:700">+&#8377;' + (t.max_profit_rupees || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '<br><span style="font-size:9.5px;color:var(--green)">(' + (t.max_profit_pct || 0).toFixed(1) + '% peak)</span></span>';
+
+            var elStatus = row.querySelector('.cell-status'); if (elStatus) elStatus.innerHTML = statusHtml;
+            var elDetails = row.querySelector('.cell-details'); if (elDetails) elDetails.innerHTML = detailsHtml;
+            var elRisk = row.querySelector('.cell-risk'); if (elRisk) elRisk.innerHTML = riskHtml;
+            var elMaxProf = row.querySelector('.cell-maxprof'); if (elMaxProf) elMaxProf.innerHTML = maxProfHtml;
+            var el1to1 = row.querySelector('.cell-1to1'); if (el1to1) el1to1.innerHTML = pnl1to1Html;
+            var elNorm = row.querySelector('.cell-norm'); if (elNorm) elNorm.innerHTML = pnlCellHtml;
+          }}
+        }} else {{
+          if (row) {{
+            row.className = 'journal-row-unexec';
+            row.style.display = onlyExec ? 'none' : '';
+            var statusHtml = '';
+            var detailsHtml = '';
+
+            if (t.gap_filtered) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>';
+              detailsHtml = '<span style="color:var(--muted)">Disqualified by opening gap alignment</span>';
+            }} else if (t.erratic_filtered) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>';
+              detailsHtml = '<span style="color:var(--muted)">1st 5-min candle range &gt; 2.0%</span>';
+            }} else {{
+              statusHtml = '<span class="neu">&#9203; Not Triggered</span>';
+              detailsHtml = '<span style="color:var(--muted)">Price never broke 1st 5-min breakout level</span>';
+            }}
+
+            var elStatus = row.querySelector('.cell-status'); if (elStatus) elStatus.innerHTML = statusHtml;
+            var elDetails = row.querySelector('.cell-details'); if (elDetails) elDetails.innerHTML = detailsHtml;
+            var elRisk = row.querySelector('.cell-risk'); if (elRisk) elRisk.innerHTML = '-';
+            var elMaxProf = row.querySelector('.cell-maxprof'); if (elMaxProf) elMaxProf.innerHTML = '-';
+            var el1to1 = row.querySelector('.cell-1to1'); if (el1to1) el1to1.innerHTML = '<span class="neu">&#8377;0.00</span>';
+            var elNorm = row.querySelector('.cell-norm'); if (elNorm) elNorm.innerHTML = '<span class="neu">&#8377;0.00</span>';
+          }}
+        }}
+      }});
+
+      // Update Day Headers
+      Object.keys(dayMap).forEach(function(d) {{
+        var dm = dayMap[d];
+        var h1to1 = document.getElementById('day-header-1to1-' + d);
+        var hNorm = document.getElementById('day-header-norm-' + d);
+        var hTitle = document.getElementById('day-header-title-' + d);
+
+        if (hTitle) {{
+          hTitle.innerHTML = '&#128197; Trading Session: <span style="color:var(--blue)">' + d + '</span> (' + dm.trig + ' / ' + dm.total + ' Executed)';
+        }}
+        if (h1to1) {{
+          var s1 = dm.pnl_1to1 >= 0 ? '+' : '';
+          var c1 = dm.pnl_1to1 >= 0 ? 'var(--green)' : (dm.pnl_1to1 < 0 ? 'var(--red)' : 'var(--muted)');
+          h1to1.innerHTML = '1:1 Target Net P&amp;L: <b style="color:' + c1 + ';font-size:13px">' + s1 + '&#8377;' + dm.pnl_1to1.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b>';
+        }}
+        if (hNorm) {{
+          var sn = dm.pnl >= 0 ? '+' : '';
+          var cn = dm.pnl >= 0 ? 'var(--green)' : (dm.pnl < 0 ? 'var(--red)' : 'var(--muted)');
+          var roi = dm.margin > 0 ? (dm.pnl / dm.margin * 100).toFixed(2) : '0.00';
+          hNorm.innerHTML = 'Normal Net P&amp;L (3:10 PM): <b style="color:' + cn + ';font-size:13px">' + sn + '&#8377;' + dm.pnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b> (' + sn + roi + '% 5X ROI)';
+        }}
+      }});
+
+      // Global summary KPIs
+      var totalTriggered = trigTrades.length;
+      var totalNormalPnl = trigTrades.reduce(function(acc, x) {{ return acc + (x.pnl || 0.0); }}, 0.0);
+      var total1to1Pnl = trigTrades.reduce(function(acc, x) {{ return acc + (x.pnl_1to1 || 0.0); }}, 0.0);
+      var winRate = totalTriggered > 0 ? (wins.length / totalTriggered * 100).toFixed(1) : '0.0';
+      var totalWinProfit = wins.reduce(function(acc, x) {{ return acc + (x.pnl || 0.0); }}, 0.0);
+      var totalLossProfit = Math.abs(losses.reduce(function(acc, x) {{ return acc + (x.pnl || 0.0); }}, 0.0));
+      var profitFactor = totalLossProfit > 0 ? (totalWinProfit / totalLossProfit).toFixed(2) : (totalWinProfit > 0 ? totalWinProfit.toFixed(2) : '0.00');
+
+      var elNormVal = document.getElementById('kpi-normal-pnl-val');
+      var elNormSub = document.getElementById('kpi-normal-trades-sub');
+      if (elNormVal) {{
+        var snorm = totalNormalPnl >= 0 ? '+' : '';
+        elNormVal.style.color = totalNormalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        elNormVal.innerHTML = snorm + '&#8377;' + totalNormalPnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      }}
+      if (elNormSub) {{
+        elNormSub.innerHTML = 'Total Triggered Trades: <b>' + totalTriggered + '</b>';
+      }}
+
+      var el1to1Val = document.getElementById('kpi-1to1-pnl-val');
+      if (el1to1Val) {{
+        var s1to1 = total1to1Pnl >= 0 ? '+' : '';
+        el1to1Val.style.color = total1to1Pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        el1to1Val.innerHTML = s1to1 + '&#8377;' + total1to1Pnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      }}
+
+      var elWrVal = document.getElementById('kpi-winrate-val');
+      var elWrSub = document.getElementById('kpi-wins-losses-sub');
+      if (elWrVal) elWrVal.innerHTML = winRate + '%';
+      if (elWrSub) elWrSub.innerHTML = '<span style="color:var(--green)">' + wins.length + ' Wins</span> &middot; <span style="color:var(--red)">' + losses.length + ' Losses</span>';
+
+      var elMaxProf = document.getElementById('kpi-maxprofit-val');
+      var elPfSub = document.getElementById('kpi-profitfactor-sub');
+      if (elMaxProf) elMaxProf.innerHTML = '+&#8377;' + totalMaxProfit.toLocaleString('en-IN', {{maximumFractionDigits: 0}});
+      if (elPfSub) elPfSub.innerHTML = 'Profit Factor: <b>' + profitFactor + '</b>';
+
+      var simBanner = document.getElementById('sim-status-summary');
+      if (simBanner) {{
+        var pnlSignStr = totalNormalPnl >= 0 ? '+' : '';
+        simBanner.innerHTML = '&#9679; <b>Default Strategy Active</b> &middot; ' + totalTriggered + ' Executed &middot; Net P&amp;L: <b>' + pnlSignStr + '&#8377;' + totalNormalPnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b>';
+      }}
+
+      // Update Equity Curve Chart
+      if (_equityChartInstance) {{
+        var ascDates = Object.keys(dayMap).sort();
+        var cumNorm = 0;
+        var cum11 = 0;
+        var newNormData = [0.0];
+        var new11Data = [0.0];
+        ascDates.forEach(function(dt) {{
+          cumNorm += dayMap[dt].pnl;
+          cum11 += dayMap[dt].pnl_1to1;
+          newNormData.push(Math.round(cumNorm * 10) / 10);
+          new11Data.push(Math.round(cum11 * 10) / 10);
+        }});
+        _equityChartInstance.data.datasets[0].data = newNormData;
+        _equityChartInstance.data.datasets[1].data = new11Data;
+        _equityChartInstance.update();
+      }}
     }}
 
     function recomputeWhatIfSimulator() {{
@@ -2556,8 +2794,7 @@ def build_journal_tab(journal):
 
     document.addEventListener('DOMContentLoaded', function() {{
       initEquityChart();
-      var cb = document.getElementById('journal-exec-filter');
-      if (cb) filterJournalRows(cb.checked);
+      renderDefaultAuditLog();
     }});
     </script>
     """
