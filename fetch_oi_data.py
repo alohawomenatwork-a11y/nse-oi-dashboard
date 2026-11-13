@@ -801,8 +801,23 @@ function doLiveRefresh() {
       document.getElementById('live-err').textContent = '';
     })
     .catch(function(e){
-      setErr('&#9888; Cannot reach live server. Run: python live_server.py');
-      setStatus('Static snapshot', false);
+      if (typeof fetchTradingViewDirect === 'function') {
+        fetchTradingViewDirect(triggered.map(function(t){ return t.symbol; }))
+          .then(function(prices){
+            applyLivePrices(trades, prices);
+            var now = new Date().toLocaleTimeString('en-IN');
+            setStatus('&#128994; Live (TV Feed) — updated ' + now, true);
+            document.getElementById('live-ts').textContent = '';
+            document.getElementById('live-err').textContent = '';
+          })
+          .catch(function(err2){
+            setErr('&#9888; Cannot reach live price feed. Run live_server.py or check connection.');
+            setStatus('Static snapshot', false);
+          });
+      } else {
+        setErr('&#9888; Cannot reach live server. Run: python live_server.py');
+        setStatus('Static snapshot', false);
+      }
     });
 }
 
@@ -2260,7 +2275,12 @@ def build_journal_tab(journal):
     <div class="sec" style="margin:0 10px 15px 10px">
       <div class="sh" style="background:#131824;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>&#128220; Complete Trade Execution History &amp; Risk/Reward Journal</div>
-        <div style="display:flex;align-items:center;gap:12px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button id="btn-journal-refresh" onclick="refreshJournalLivePrices()" style="background:#1b2438;border:1px solid #00c47a;color:#00ff9d;padding:4px 12px;border-radius:5px;font-size:11.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 1px 3px rgba(0,0,0,0.3);transition:all 0.15s" title="Fetch live market prices and update today's trade P&amp;L in real time" onmouseover="this.style.background='#00c47a';this.style.color='#000'" onmouseout="this.style.background='#1b2438';this.style.color='#00ff9d'">
+            <span id="journal-refresh-icon">&#128259;</span>
+            <span id="journal-refresh-lbl">Refresh Live P&amp;L</span>
+          </button>
+          <span id="journal-live-status" style="font-size:10.5px;color:var(--muted)"></span>
           <label style="font-size:11px;color:#00ff9d;cursor:pointer;display:flex;align-items:center;gap:6px">
             <input type="checkbox" id="journal-exec-filter" checked onchange="onFilterExecutedToggled(this.checked)" style="accent-color:var(--green);cursor:pointer;width:14px;height:14px">
             <span><b>Show Only Executed Trades</b></span>
@@ -2790,6 +2810,198 @@ def build_journal_tab(journal):
         _equityChartInstance.data.datasets[1].data = new11Data;
         _equityChartInstance.update();
       }}
+    }}
+
+    function fetchTradingViewDirect(symbols) {{
+      var tvTickers = symbols.map(function(s) {{
+        var clean = s.replace('.NS', '').replace('NSE:', '').replace(/-/g, '_').replace(/&/g, '_');
+        return 'NSE:' + clean;
+      }});
+      return fetch('https://scanner.tradingview.com/india/scan', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ symbols: {{ tickers: tvTickers }}, columns: ['close', 'high', 'low'] }}),
+        signal: AbortSignal.timeout(6000)
+      }})
+      .then(function(res) {{
+        if (!res.ok) throw new Error('TradingView error ' + res.status);
+        return res.json();
+      }})
+      .then(function(data) {{
+        var prices = {{}};
+        if (data && data.data) {{
+          data.data.forEach(function(row) {{
+            var raw = (row.s || '').replace('NSE:', '');
+            symbols.forEach(function(orig) {{
+              var norm = orig.replace('.NS', '').replace('NSE:', '').replace(/-/g, '_').replace(/&/g, '_');
+              if (norm === raw && row.d && row.d[0] != null) {{
+                prices[orig.replace('.NS', '')] = Math.round(Number(row.d[0]) * 100) / 100;
+              }}
+            }});
+          }});
+        }}
+        return prices;
+      }});
+    }}
+
+    function refreshJournalLivePrices() {{
+      var btn = document.getElementById('btn-journal-refresh');
+      var lbl = document.getElementById('journal-refresh-lbl');
+      var st = document.getElementById('journal-live-status');
+
+      if (btn) btn.disabled = true;
+      if (lbl) lbl.textContent = 'Updating...';
+      if (st) st.innerHTML = '<span style="color:var(--blue)">&#9203; Contacting feed...</span>';
+
+      var todayTrades = HISTORIC_JOURNAL_DATA.filter(function(t) {{
+        return t.date === TODAY_DATE_STR;
+      }});
+
+      if (!todayTrades.length) {{
+        if (st) st.innerHTML = '<span style="color:var(--yel)">No trades for today (' + TODAY_DATE_STR + ')</span>';
+        if (btn) btn.disabled = false;
+        if (lbl) lbl.textContent = 'Refresh Live P&L';
+        return;
+      }}
+
+      var symList = todayTrades.map(function(t) {{ return t.symbol; }});
+      var querySymbols = symList.map(function(s) {{ return s + '.NS'; }}).join(',');
+      var localUrl = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(querySymbols);
+
+      fetch(localUrl, {{ signal: AbortSignal.timeout(2500) }})
+        .then(function(r) {{
+          if (!r.ok) throw new Error('Local server error ' + r.status);
+          return r.json();
+        }})
+        .catch(function() {{
+          return fetchTradingViewDirect(symList);
+        }})
+        .then(function(prices) {{
+          if (!prices || !Object.keys(prices).length) {{
+            throw new Error('No quotes returned');
+          }}
+
+          var nowTime = new Date().toLocaleTimeString('en-IN', {{ hour: '2-digit', minute: '2-digit', hour12: false }});
+          var updatedCount = 0;
+
+          todayTrades.forEach(function(t) {{
+            var ltp = prices[t.symbol];
+            if (!ltp || isNaN(ltp) || ltp <= 0) return;
+
+            // 1. Standard / Default Strategy update
+            if (t.triggered) {{
+              if (t.exit_reason !== 'SL Hit') {{
+                updatedCount++;
+                var isSlHit = (t.side === 'BUY' && ltp <= t.sl_price) || (t.side === 'SELL' && ltp >= t.sl_price);
+                if (isSlHit) {{
+                  t.exit_reason = 'SL Hit';
+                  t.exit_price = t.sl_price;
+                  t.exit_time = nowTime;
+                  var slPnl = t.side === 'BUY' ? (t.sl_price - t.entry_price) * t.qty : (t.entry_price - t.sl_price) * t.qty;
+                  t.pnl = Math.round(slPnl * 10) / 10;
+                  t.pnl_pct = t.margin_used > 0 ? Math.round((t.pnl / t.margin_used * 100) * 100) / 100 : 0;
+                  t.pnl_1to1 = t.pnl;
+                  t.pnl_1to1_pct = t.pnl_pct;
+                }} else {{
+                  t.exit_price = ltp;
+                  var curPnl = t.side === 'BUY' ? (ltp - t.entry_price) * t.qty : (t.entry_price - ltp) * t.qty;
+                  t.pnl = Math.round(curPnl * 10) / 10;
+                  t.pnl_pct = t.margin_used > 0 ? Math.round((curPnl / t.margin_used * 100) * 100) / 100 : 0;
+
+                  // 1:1 Target check
+                  if (!t.target_1to1_hit) {{
+                    var is1to1 = (t.side === 'BUY' && ltp >= t.target_1to1) || (t.side === 'SELL' && ltp <= t.target_1to1);
+                    if (is1to1) {{
+                      t.target_1to1_hit = true;
+                      t.target_1to1_time = nowTime;
+                      var p1 = t.side === 'BUY' ? (t.target_1to1 - t.entry_price) * t.qty : (t.entry_price - t.target_1to1) * t.qty;
+                      t.pnl_1to1 = Math.round(p1 * 10) / 10;
+                      t.pnl_1to1_pct = t.margin_used > 0 ? Math.round((t.pnl_1to1 / t.margin_used * 100) * 100) / 100 : 0;
+                    }} else {{
+                      t.pnl_1to1 = t.pnl;
+                      t.pnl_1to1_pct = t.pnl_pct;
+                    }}
+                  }}
+
+                  // Peak Profit
+                  if (curPnl > (t.max_profit_rupees || 0)) {{
+                    t.max_profit_rupees = Math.round(curPnl * 10) / 10;
+                    t.max_profit_pct = t.margin_used > 0 ? Math.round((curPnl / t.margin_used * 100) * 100) / 100 : 0;
+                  }}
+                }}
+              }}
+            }}
+
+            // 2. What-If Simulated fields update
+            if (t.sim_triggered) {{
+              if (t.sim_exit_reason !== 'SL Hit') {{
+                var isSimSlHit = (t.side === 'BUY' && ltp <= t.sim_sl_price) || (t.side === 'SELL' && ltp >= t.sim_sl_price);
+                if (isSimSlHit) {{
+                  t.sim_exit_reason = 'SL Hit';
+                  t.sim_exit_price = t.sim_sl_price;
+                  t.sim_exit_time = nowTime;
+                  var simSlPnl = t.side === 'BUY' ? (t.sim_sl_price - t.sim_entry_price) * t.sim_qty : (t.sim_entry_price - t.sim_sl_price) * t.sim_qty;
+                  t.sim_pnl = Math.round(simSlPnl * 10) / 10;
+                  t.sim_pnl_pct = t.sim_margin_used > 0 ? Math.round((t.sim_pnl / t.sim_margin_used * 100) * 100) / 100 : 0;
+                  t.sim_pnl_1to1 = t.sim_pnl;
+                  t.sim_pnl_1to1_pct = t.sim_pnl_pct;
+                }} else {{
+                  t.sim_exit_price = ltp;
+                  var curSimPnl = t.side === 'BUY' ? (ltp - t.sim_entry_price) * t.sim_qty : (t.sim_entry_price - ltp) * t.sim_qty;
+                  t.sim_pnl = Math.round(curSimPnl * 10) / 10;
+                  t.sim_pnl_pct = t.sim_margin_used > 0 ? Math.round((curSimPnl / t.sim_margin_used * 100) * 100) / 100 : 0;
+
+                  if (!t.sim_target_1to1_hit) {{
+                    var isSim1to1 = (t.side === 'BUY' && ltp >= t.sim_target_1to1) || (t.side === 'SELL' && ltp <= t.sim_target_1to1);
+                    if (isSim1to1) {{
+                      t.sim_target_1to1_hit = true;
+                      t.sim_target_1to1_time = nowTime;
+                      var sp1 = t.side === 'BUY' ? (t.sim_target_1to1 - t.sim_entry_price) * t.sim_qty : (t.sim_entry_price - t.sim_target_1to1) * t.sim_qty;
+                      t.sim_pnl_1to1 = Math.round(sp1 * 10) / 10;
+                      t.sim_pnl_1to1_pct = t.sim_margin_used > 0 ? Math.round((t.sim_pnl_1to1 / t.sim_margin_used * 100) * 100) / 100 : 0;
+                    }} else {{
+                      t.sim_pnl_1to1 = t.sim_pnl;
+                      t.sim_pnl_1to1_pct = t.sim_pnl_pct;
+                    }}
+                  }}
+
+                  if (curSimPnl > (t.sim_max_profit_rupees || 0)) {{
+                    t.sim_max_profit_rupees = Math.round(curSimPnl * 10) / 10;
+                    t.sim_max_profit_pct = t.sim_margin_used > 0 ? Math.round((curSimPnl / t.sim_margin_used * 100) * 100) / 100 : 0;
+                  }}
+                }}
+              }}
+            }}
+          }});
+
+          // Re-render Tab 4 according to active mode
+          if (CURRENT_JOURNAL_MODE === 'default') {{
+            renderDefaultAuditLog();
+          }} else {{
+            recomputeWhatIfSimulator();
+          }}
+
+          // Also keep Tab 2 in sync if present
+          if (typeof applyLivePrices === 'function') {{
+            var liveTradesRaw = document.getElementById('live-trades-data');
+            if (liveTradesRaw) {{
+              try {{
+                var liveTrades = JSON.parse(liveTradesRaw.textContent);
+                applyLivePrices(liveTrades, prices);
+              }} catch(err) {{}}
+            }}
+          }}
+
+          var stamp = new Date().toLocaleTimeString('en-IN');
+          if (st) st.innerHTML = '<span style="color:#00ff9d;font-weight:600">&#128994; Live LTP updated @ ' + stamp + '</span>';
+        }})
+        .catch(function(err) {{
+          if (st) st.innerHTML = '<span style="color:var(--red)">&#9888; Update failed: ' + (err.message || 'Market feed unavailable') + '</span>';
+        }})
+        .finally(function() {{
+          if (btn) btn.disabled = false;
+          if (lbl) lbl.textContent = 'Refresh Live P&L';
+        }});
     }}
 
     document.addEventListener('DOMContentLoaded', function() {{
