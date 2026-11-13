@@ -775,6 +775,38 @@ function fmtINR(n) {
   return (neg ? '-' : '') + rest + '.' + dec;
 }
 
+function fetchTradingViewDirect(symbols) {
+  var tvTickers = symbols.map(function(s) {
+    var clean = s.replace('.NS', '').replace('NSE:', '').replace(/-/g, '_').replace(/&/g, '_');
+    return 'NSE:' + clean;
+  });
+  return fetch('https://scanner.tradingview.com/india/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ symbols: { tickers: tvTickers }, columns: ['close', 'high', 'low'] }),
+    signal: AbortSignal.timeout(6000)
+  })
+  .then(function(res) {
+    if (!res.ok) throw new Error('TradingView error ' + res.status);
+    return res.json();
+  })
+  .then(function(data) {
+    var prices = {};
+    if (data && data.data) {
+      data.data.forEach(function(row) {
+        var raw = (row.s || '').replace('NSE:', '');
+        symbols.forEach(function(orig) {
+          var norm = orig.replace('.NS', '').replace('NSE:', '').replace(/-/g, '_').replace(/&/g, '_');
+          if (norm === raw && row.d && row.d[0] != null) {
+            prices[orig.replace('.NS', '')] = Math.round(Number(row.d[0]) * 100) / 100;
+          }
+        });
+      });
+    }
+    return prices;
+  });
+}
+
 function doLiveRefresh() {
   var tradesRaw = document.getElementById('live-trades-data');
   if (!tradesRaw) { setErr('No trade data embedded. Re-run fetch_oi_data.py.'); return; }
@@ -784,41 +816,37 @@ function doLiveRefresh() {
   var triggered = trades.filter(function(t){ return t.triggered; });
   if (!triggered.length) { setErr('No triggered trades to update.'); return; }
 
-  var symbols = triggered.map(function(t){ return t.symbol + '.NS'; }).join(',');
-  var url = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(symbols);
+  var symList = triggered.map(function(t){ return t.symbol; });
+  var isLocal = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (window.location.protocol === 'http:');
 
   setStatus('Fetching live prices…', false);
-  fetch(url, {signal: AbortSignal.timeout(8000)})
-    .then(function(r){
-      if (!r.ok) throw new Error('Server error ' + r.status);
-      return r.json();
-    })
-    .then(function(prices){
-      applyLivePrices(trades, prices);
-      var now = new Date().toLocaleTimeString('en-IN');
-      setStatus('&#128994; Live — updated ' + now, true);
-      document.getElementById('live-ts').textContent = '';
-      document.getElementById('live-err').textContent = '';
-    })
-    .catch(function(e){
-      if (typeof fetchTradingViewDirect === 'function') {
-        fetchTradingViewDirect(triggered.map(function(t){ return t.symbol; }))
-          .then(function(prices){
-            applyLivePrices(trades, prices);
-            var now = new Date().toLocaleTimeString('en-IN');
-            setStatus('&#128994; Live (TV Feed) — updated ' + now, true);
-            document.getElementById('live-ts').textContent = '';
-            document.getElementById('live-err').textContent = '';
-          })
-          .catch(function(err2){
-            setErr('&#9888; Cannot reach live price feed. Run live_server.py or check connection.');
-            setStatus('Static snapshot', false);
-          });
-      } else {
-        setErr('&#9888; Cannot reach live server. Run: python live_server.py');
-        setStatus('Static snapshot', false);
-      }
-    });
+  var p;
+  if (isLocal) {
+    var symbols = symList.map(function(s){ return s + '.NS'; }).join(',');
+    var url = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(symbols);
+    p = fetch(url, {signal: AbortSignal.timeout(2500)})
+      .then(function(r){
+        if (!r.ok) throw new Error('Server error ' + r.status);
+        return r.json();
+      })
+      .catch(function(e){
+        return fetchTradingViewDirect(symList);
+      });
+  } else {
+    p = fetchTradingViewDirect(symList);
+  }
+
+  p.then(function(prices){
+    applyLivePrices(trades, prices);
+    var now = new Date().toLocaleTimeString('en-IN');
+    setStatus('&#128994; Live — updated ' + now, true);
+    document.getElementById('live-ts').textContent = '';
+    document.getElementById('live-err').textContent = '';
+  })
+  .catch(function(e){
+    setErr('&#9888; ' + (e.message || 'Cannot reach live prices'));
+    setStatus('Static snapshot', false);
+  });
 }
 
 function applyLivePrices(trades, prices) {
@@ -2819,7 +2847,7 @@ def build_journal_tab(journal):
       }});
       return fetch('https://scanner.tradingview.com/india/scan', {{
         method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
+        headers: {{ 'Content-Type': 'text/plain' }},
         body: JSON.stringify({{ symbols: {{ tickers: tvTickers }}, columns: ['close', 'high', 'low'] }}),
         signal: AbortSignal.timeout(6000)
       }})
@@ -2865,17 +2893,25 @@ def build_journal_tab(journal):
       }}
 
       var symList = todayTrades.map(function(t) {{ return t.symbol; }});
-      var querySymbols = symList.map(function(s) {{ return s + '.NS'; }}).join(',');
-      var localUrl = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(querySymbols);
+      var isLocal = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (window.location.protocol === 'http:');
+      var fetchPromise;
 
-      fetch(localUrl, {{ signal: AbortSignal.timeout(2500) }})
-        .then(function(r) {{
-          if (!r.ok) throw new Error('Local server error ' + r.status);
-          return r.json();
-        }})
-        .catch(function() {{
-          return fetchTradingViewDirect(symList);
-        }})
+      if (isLocal) {{
+        var querySymbols = symList.map(function(s) {{ return s + '.NS'; }}).join(',');
+        var localUrl = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(querySymbols);
+        fetchPromise = fetch(localUrl, {{ signal: AbortSignal.timeout(2500) }})
+          .then(function(r) {{
+            if (!r.ok) throw new Error('Local server error ' + r.status);
+            return r.json();
+          }})
+          .catch(function() {{
+            return fetchTradingViewDirect(symList);
+          }});
+      }} else {{
+        fetchPromise = fetchTradingViewDirect(symList);
+      }}
+
+      fetchPromise
         .then(function(prices) {{
           if (!prices || !Object.keys(prices).length) {{
             throw new Error('No quotes returned');
