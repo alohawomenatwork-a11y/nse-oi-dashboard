@@ -104,6 +104,42 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
             """
         )
 
+        # Check and migrate columns for trade_executions if needed
+        cur = conn.cursor()
+        existing_cols = {row["name"] for row in cur.execute("PRAGMA table_info(trade_executions)").fetchall()}
+        new_cols = [
+            ("gap_pct", "REAL DEFAULT 0.0"),
+            ("bar0_range_pct", "REAL DEFAULT 0.0"),
+            ("filter_open_prev_failed", "INTEGER DEFAULT 0"),
+            ("filter_extreme_gap_failed", "INTEGER DEFAULT 0"),
+            ("filter_erratic_range_failed", "INTEGER DEFAULT 0"),
+            ("sim_triggered", "INTEGER DEFAULT 0"),
+            ("sim_entry_price", "REAL DEFAULT 0.0"),
+            ("sim_sl_price", "REAL DEFAULT 0.0"),
+            ("sim_exit_price", "REAL DEFAULT 0.0"),
+            ("sim_exit_time", "TEXT DEFAULT '15:10'"),
+            ("sim_exit_reason", "TEXT DEFAULT 'LTP'"),
+            ("sim_qty", "INTEGER DEFAULT 0"),
+            ("sim_margin_used", "REAL DEFAULT 0.0"),
+            ("sim_risk_rupees", "REAL DEFAULT 0.0"),
+            ("sim_risk_pct", "REAL DEFAULT 0.0"),
+            ("sim_max_profit_rupees", "REAL DEFAULT 0.0"),
+            ("sim_max_profit_pct", "REAL DEFAULT 0.0"),
+            ("sim_target_1to1", "REAL DEFAULT 0.0"),
+            ("sim_target_1to1_hit", "INTEGER DEFAULT 0"),
+            ("sim_target_1to1_time", "TEXT DEFAULT '-'"),
+            ("sim_pnl", "REAL DEFAULT 0.0"),
+            ("sim_pnl_pct", "REAL DEFAULT 0.0"),
+            ("sim_pnl_1to1", "REAL DEFAULT 0.0"),
+            ("sim_pnl_1to1_pct", "REAL DEFAULT 0.0"),
+        ]
+        for col_name, col_def in new_cols:
+            if col_name not in existing_cols:
+                try:
+                    conn.execute(f"ALTER TABLE trade_executions ADD COLUMN {col_name} {col_def}")
+                except Exception:
+                    pass
+
 
 def _classify_bucket(price_chg: float, oi_chg: int) -> str:
     if price_chg > 0 and oi_chg > 0:
@@ -248,6 +284,30 @@ def save_trade_executions(trade_date_str: str, trades: list,
             float(t.get("pnl_1to1_pct") or 0.0),
             1 if t.get("gap_filtered") else 0,
             1 if t.get("erratic_filtered") else 0,
+            float(t.get("gap_pct") or 0.0),
+            float(t.get("bar0_range_pct") or 0.0),
+            1 if t.get("filter_open_prev_failed") else 0,
+            1 if t.get("filter_extreme_gap_failed") else 0,
+            1 if t.get("filter_erratic_range_failed") else 0,
+            1 if t.get("sim_triggered") else 0,
+            float(t.get("sim_entry_price") or 0.0),
+            float(t.get("sim_sl_price") or 0.0),
+            float(t.get("sim_exit_price") or 0.0),
+            t.get("sim_exit_time", "15:10"),
+            t.get("sim_exit_reason", "LTP"),
+            int(t.get("sim_qty") or 0),
+            float(t.get("sim_margin_used") or 0.0),
+            float(t.get("sim_risk_rupees") or 0.0),
+            float(t.get("sim_risk_pct") or 0.0),
+            float(t.get("sim_max_profit_rupees") or 0.0),
+            float(t.get("sim_max_profit_pct") or 0.0),
+            float(t.get("sim_target_1to1") or 0.0),
+            1 if t.get("sim_target_1to1_hit") else 0,
+            t.get("sim_target_1to1_time", "-"),
+            float(t.get("sim_pnl") or 0.0),
+            float(t.get("sim_pnl_pct") or 0.0),
+            float(t.get("sim_pnl_1to1") or 0.0),
+            float(t.get("sim_pnl_1to1_pct") or 0.0),
         )
         for t in trades
     ]
@@ -267,8 +327,15 @@ def save_trade_executions(trade_date_str: str, trades: list,
                 entry_price, sl_price, exit_price, exit_time, exit_reason, qty,
                 margin_used, risk_rupees, risk_pct, max_profit_rupees, max_profit_pct,
                 pnl, pnl_pct, target_1to1, target_1to1_hit, target_1to1_time,
-                pnl_1to1, pnl_1to1_pct, gap_filtered, erratic_filtered
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                pnl_1to1, pnl_1to1_pct, gap_filtered, erratic_filtered,
+                gap_pct, bar0_range_pct, filter_open_prev_failed, filter_extreme_gap_failed,
+                filter_erratic_range_failed, sim_triggered, sim_entry_price, sim_sl_price,
+                sim_exit_price, sim_exit_time, sim_exit_reason, sim_qty, sim_margin_used,
+                sim_risk_rupees, sim_risk_pct, sim_max_profit_rupees, sim_max_profit_pct,
+                sim_target_1to1, sim_target_1to1_hit, sim_target_1to1_time, sim_pnl,
+                sim_pnl_pct, sim_pnl_1to1, sim_pnl_1to1_pct
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(trade_date, symbol, rule_version) DO UPDATE SET
                 side=excluded.side,
                 triggered=excluded.triggered,
@@ -292,7 +359,31 @@ def save_trade_executions(trade_date_str: str, trades: list,
                 pnl_1to1=excluded.pnl_1to1,
                 pnl_1to1_pct=excluded.pnl_1to1_pct,
                 gap_filtered=excluded.gap_filtered,
-                erratic_filtered=excluded.erratic_filtered
+                erratic_filtered=excluded.erratic_filtered,
+                gap_pct=excluded.gap_pct,
+                bar0_range_pct=excluded.bar0_range_pct,
+                filter_open_prev_failed=excluded.filter_open_prev_failed,
+                filter_extreme_gap_failed=excluded.filter_extreme_gap_failed,
+                filter_erratic_range_failed=excluded.filter_erratic_range_failed,
+                sim_triggered=excluded.sim_triggered,
+                sim_entry_price=excluded.sim_entry_price,
+                sim_sl_price=excluded.sim_sl_price,
+                sim_exit_price=excluded.sim_exit_price,
+                sim_exit_time=excluded.sim_exit_time,
+                sim_exit_reason=excluded.sim_exit_reason,
+                sim_qty=excluded.sim_qty,
+                sim_margin_used=excluded.sim_margin_used,
+                sim_risk_rupees=excluded.sim_risk_rupees,
+                sim_risk_pct=excluded.sim_risk_pct,
+                sim_max_profit_rupees=excluded.sim_max_profit_rupees,
+                sim_max_profit_pct=excluded.sim_max_profit_pct,
+                sim_target_1to1=excluded.target_1to1,
+                sim_target_1to1_hit=excluded.sim_target_1to1_hit,
+                sim_target_1to1_time=excluded.sim_target_1to1_time,
+                sim_pnl=excluded.sim_pnl,
+                sim_pnl_pct=excluded.sim_pnl_pct,
+                sim_pnl_1to1=excluded.sim_pnl_1to1,
+                sim_pnl_1to1_pct=excluded.sim_pnl_1to1_pct
             """,
             records,
         )

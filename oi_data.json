@@ -159,19 +159,6 @@
       "deliv_pct": 24.48
     },
     {
-      "symbol": "GODFRYPHLP",
-      "last_close": 1820.5,
-      "open": 1868.0,
-      "high": 1890.4,
-      "low": 1800.0,
-      "close": 1814.5,
-      "price_chg": -0.33,
-      "oi": 1861475,
-      "oi_chg": 165000,
-      "oi_chg_pct": 9.73,
-      "deliv_pct": 25.13
-    },
-    {
       "symbol": "HAL",
       "last_close": 4949.0,
       "open": 4962.0,
@@ -261,6 +248,19 @@
       "oi_chg": 2605325,
       "oi_chg_pct": 7.36,
       "deliv_pct": 29.62
+    },
+    {
+      "symbol": "BAJAJ-AUTO",
+      "last_close": 11040.0,
+      "open": 11040.0,
+      "high": 11173.0,
+      "low": 10889.0,
+      "close": 10945.0,
+      "price_chg": -0.86,
+      "oi": 1670025,
+      "oi_chg": 108225,
+      "oi_chg_pct": 6.93,
+      "deliv_pct": 64.74
     }
   ],
   "short_covering": [

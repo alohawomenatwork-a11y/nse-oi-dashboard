@@ -651,13 +651,45 @@ def main():
     print(f"\n{'='*72}")
     print("  Regenerating dashboard.html…")
     try:
-        import subprocess, shutil
-        res = subprocess.run([sys.executable, os.path.join(ROOT, "fetch_oi_data.py")],
-                             cwd=ROOT, check=True)
+        # Import the main script's generate_html via its module
+        import importlib.util, types
+
+        spec = importlib.util.spec_from_file_location(
+            "fetch_oi_data", os.path.join(ROOT, "fetch_oi_data.py"))
+        mod = importlib.util.module_from_spec(spec)
+        # Avoid running __main__ block
+        mod.__name__ = "fetch_oi_data_imported"
+        sys.modules["fetch_oi_data_imported"] = mod
+        spec.loader.exec_module(mod)
+
+        # Use the most recent completed trading day (before 4 PM IST, use previous trading day)
+        today = datetime.date.today()
+        if today.weekday() == 5:
+            analysis_date = today - datetime.timedelta(days=1)
+        elif today.weekday() == 6:
+            analysis_date = today - datetime.timedelta(days=2)
+        elif datetime.datetime.now().hour < 16:
+            analysis_date = mod.prev_trading_days(today, n=1)[0]
+        else:
+            analysis_date = today
+
+        rows, as_of = mod.build_rows(analysis_date)
+        data = mod.classify(rows, as_of)
+
+        import requests
+        session = mod.get_nse_session()
+        has_real_oi = any(r["oi"] > 0
+                          for bucket in [data["fresh_longs"], data["fresh_shorts"],
+                                         data["short_covering"], data["long_unwinding"]]
+                          for r in bucket)
+        oi_src = "NSE Bhavcopy (Real OI)" if has_real_oi else "yfinance (Approx OI)"
+
         out_path = os.path.join(ROOT, "dashboard.html")
-        idx_path = os.path.join(ROOT, "index.html")
-        if os.path.exists(out_path):
-            shutil.copy2(out_path, idx_path)
+        mod.generate_html(data, out_path, session=session,
+                          ref_date=analysis_date, oi_source=oi_src)
+        # Also copy to index.html
+        import shutil
+        shutil.copy2(out_path, os.path.join(ROOT, "index.html"))
         print(f"  ✓ Dashboard regenerated: {out_path}")
         print(f"  ✓ index.html updated")
     except Exception as e:
