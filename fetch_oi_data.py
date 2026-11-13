@@ -10,7 +10,23 @@ Usage:
     python fetch_oi_data.py 2026-11-04   # specific date (YYYY-MM-DD)
 """
 
-import os, sys, io, zipfile, json, time, random
+import argparse
+import os
+import sys
+import json
+import time
+import zipfile
+import io
+import random
+
+parser = argparse.ArgumentParser(description='Fetch OI data and optionally verify trades')
+parser.add_argument('--verify-from', type=str, help='YYYY-MM-DD start date to re‑verify trades')
+parser.add_argument('--date', type=str, help='Specific date (YYYY-MM-DD) to process')
+args, unknown = parser.parse_known_args()
+# If a specific date is supplied, limit fetch to that day
+specific_date = args.date
+verify_start = args.verify_from
+
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, date
@@ -312,11 +328,14 @@ def build_rows(analysis_date):
 
     print(f"\n[*] Analysis date : {analysis_date.strftime('%d %b %Y')}")
 
-    # --- F&O bhavcopy for today & yesterday (for OI change) ---
+    # --- F&O bhavcopy for today & yesterday (for OI change, skipping NSE holidays) ---
     print("[*] Downloading F&O bhavcopies...")
     fo_today = download_fo_bhavcopy(session, analysis_date)
-    prev_days = prev_trading_days(analysis_date, n=1)
-    fo_prev   = download_fo_bhavcopy(session, prev_days[0]) if prev_days else None
+    fo_prev = None
+    for prev_d in prev_trading_days(analysis_date, n=5):
+        fo_prev = download_fo_bhavcopy(session, prev_d)
+        if fo_prev is not None:
+            break
 
     oi_today = parse_fo_oi(fo_today)
     oi_prev  = parse_fo_oi(fo_prev)
@@ -325,6 +344,20 @@ def build_rows(analysis_date):
     print("[*] Downloading EQ bhavcopy for prices...")
     eq_today  = download_eq_bhavcopy(session, analysis_date)
     prices    = parse_eq_prices(eq_today)
+
+    # Guard: if BOTH F&O and EQ bhavcopies are missing, it is an NSE holiday (or not published yet)
+    if fo_today is None and eq_today is None:
+        print(f"[info] Both F&O and EQ bhavcopies unavailable for {analysis_date} (NSE Holiday or not yet published). Skipping.")
+        try:
+            import db_store
+            db_store.log_trade_exception(
+                analysis_date.strftime("%Y-%m-%d"), "NSE", "MARKET_SESSION",
+                "TRADING_HOLIDAY_OR_UNPUBLISHED",
+                "Both F&O and EQ bhavcopies returned 404/None"
+            )
+        except Exception:
+            pass
+        return [], analysis_date.strftime("%d %b %Y")
 
     # --- Fetch Corporate Action exclusions for current session window ---
     ca_exclusions = fetch_corporate_action_exclusions(session, analysis_date - timedelta(days=2), analysis_date + timedelta(days=1))
@@ -343,6 +376,14 @@ def build_rows(analysis_date):
         # Ignore stocks with corporate action price adjustments (dividends, bonus, splits, rights)
         if sym in ca_exclusions:
             ignored_daily_count += 1
+            try:
+                import db_store
+                db_store.log_trade_exception(
+                    analysis_date.strftime("%Y-%m-%d"), sym,
+                    "OI_SELECTION", "CORPORATE_ACTION", ca_exclusions[sym]
+                )
+            except Exception:
+                pass
             continue
 
         if sym not in prices and sym not in oi_today:
@@ -385,6 +426,12 @@ def build_rows(analysis_date):
         })
 
     print(f"[OK] Built {len(rows)} rows.")
+    try:
+        import db_store
+        saved_oi = db_store.save_daily_oi(analysis_date.strftime("%Y-%m-%d"), rows)
+        print(f"[DB] Saved {saved_oi} daily_oi rows for {analysis_date}.")
+    except Exception as e:
+        print(f"[warn] DB daily_oi save failed: {e}")
     return rows, analysis_date.strftime("%d %b %Y")
 
 # ─── CLASSIFY ────────────────────────────────────────────────────────────────
@@ -632,6 +679,7 @@ td:first-child{text-align:left;font-weight:700;color:#fff;font-size:11.5px}
   <button class="tab-btn active" onclick="openTab('daily-tab', this)">&#128202; Daily Dashboard &amp; Picks</button>
   <button class="tab-btn" onclick="openTab('pnl-tab', this)">&#128176; Capital &amp; Day's P&amp;L Tracker</button>
   <button class="tab-btn" onclick="openTab('historic-tab', this)">&#128197; 1-Week Historic Trend &amp; Setup</button>
+  <button class="tab-btn" onclick="openTab('journal-tab', this)">&#128220; Historic Trade Journal (Database)</button>
 </div>
 
 <!-- TAB 1: DAILY DASHBOARD (100% UNCHANGED CONTENT) -->
@@ -685,6 +733,11 @@ __PNL_TAB_CONTENT__
 __HISTORIC_CONTENT__
 </div>
 
+<!-- TAB 4: HISTORIC TRADE JOURNAL (DATABASE) -->
+<div id="journal-tab" class="tab-content">
+__JOURNAL_CONTENT__
+</div>
+
 <div class="foot">
   Data source: __OI_SRC__ &nbsp;|&nbsp;
   NSE F&amp;O Bhavcopy (official EOD data) &nbsp;|&nbsp;
@@ -697,6 +750,11 @@ function openTab(tabId, btn) {
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById(tabId).classList.add('active');
   btn.classList.add('active');
+  if (tabId === 'journal-tab') {
+    if (typeof initEquityChart === 'function') initEquityChart();
+    var cb = document.getElementById('journal-exec-filter');
+    if (cb && typeof filterJournalRows === 'function') filterJournalRows(cb.checked);
+  }
 }
 
 // ── LIVE P&L REFRESH ENGINE ──────────────────────────────────────────────────
@@ -743,8 +801,23 @@ function doLiveRefresh() {
       document.getElementById('live-err').textContent = '';
     })
     .catch(function(e){
-      setErr('&#9888; Cannot reach live server. Run: python live_server.py');
-      setStatus('Static snapshot', false);
+      if (typeof fetchTradingViewDirect === 'function') {
+        fetchTradingViewDirect(triggered.map(function(t){ return t.symbol; }))
+          .then(function(prices){
+            applyLivePrices(trades, prices);
+            var now = new Date().toLocaleTimeString('en-IN');
+            setStatus('&#128994; Live (TV Feed) — updated ' + now, true);
+            document.getElementById('live-ts').textContent = '';
+            document.getElementById('live-err').textContent = '';
+          })
+          .catch(function(err2){
+            setErr('&#9888; Cannot reach live price feed. Run live_server.py or check connection.');
+            setStatus('Static snapshot', false);
+          });
+      } else {
+        setErr('&#9888; Cannot reach live server. Run: python live_server.py');
+        setStatus('Static snapshot', false);
+      }
     });
 }
 
@@ -851,21 +924,14 @@ function setErr(msg) {
 </body>
 </html>"""
 
-def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000, margin=5):
+def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000, margin=5,
+                          rule_open_prev=True, rule_extreme_gap=True, rule_erratic=True):
     """
-    Opening Range Breakout (ORB) on the 1st 5-minute candle with 5X Intraday Margin (MIS):
-    - Opening Gap Condition:
-      - For BUY: Price must open ABOVE Previous Day's Close (Open >= Prev Close).
-      - For SELL: Price must open BELOW Previous Day's Close (Open <= Prev Close).
-    - Nuance Gap Rule:
-      - Extreme Gap Check: If opening gap exceeds 2.5% in either direction, it is filtered out
-        (avoids exhausted chasing / immediate morning profit-taking).
-    - Bullish setup: Enter LONG when price breaks ABOVE the 1st 5m candle High.
-      SL = Day's Low (checked only AFTER entry bar).
-    - Bearish setup: Enter SHORT when price breaks BELOW the 1st 5m candle Low.
-      SL = Day's High (checked only AFTER entry bar).
-    - 2.0% Volatility Filter: If the 1st 5m candle range > 2.0% of the stock price, trade is filtered out.
-    - 5X Margin Leverage: Purchasing power = capital * margin (e.g. ₹10,000 * 5 = ₹50,000 exposure).
+    Opening Range Breakout (ORB) on the 1st 5-minute candle with 5X Intraday Margin (MIS).
+    Supports configurable rules for What-If backtesting:
+    - rule_open_prev: BUY Open >= Prev Close, SELL Open <= Prev Close
+    - rule_extreme_gap: Exclude runaway/panic gaps > 2.5%
+    - rule_erratic: Exclude 1st 5m candle range > 2.0%
     """
     res = {
         "symbol": symbol,
@@ -888,9 +954,33 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
         "bar0_high": 0.0,
         "bar0_low": 0.0,
         "bar0_range_pct": 0.0,
+        "prev_close": prev_close,
         "gap_pct": 0.0,
+        "filter_open_prev_failed": False,
+        "filter_extreme_gap_failed": False,
+        "filter_erratic_range_failed": False,
         "erratic_filtered": False,
         "gap_filtered": False,
+        "sim_triggered": False,
+        "sim_entry_price": 0.0,
+        "sim_trigger_time": "-",
+        "sim_sl_price": 0.0,
+        "sim_exit_price": 0.0,
+        "sim_exit_time": "15:10",
+        "sim_exit_reason": "LTP",
+        "sim_qty": 0,
+        "sim_margin_used": 0.0,
+        "sim_risk_rupees": 0.0,
+        "sim_risk_pct": 0.0,
+        "sim_max_profit_rupees": 0.0,
+        "sim_max_profit_pct": 0.0,
+        "sim_pnl": 0.0,
+        "sim_pnl_pct": 0.0,
+        "sim_target_1to1": 0.0,
+        "sim_target_1to1_hit": False,
+        "sim_target_1to1_time": "-",
+        "sim_pnl_1to1": 0.0,
+        "sim_pnl_1to1_pct": 0.0,
         "status_html": ""
     }
 
@@ -902,6 +992,7 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
     bars_high  = bar_data["high"]
     bars_low   = bar_data["low"]
     bars_close = bar_data["close"]
+    bars_time  = bar_data.get("times", [])
     n_bars     = len(bars_open)
 
     if n_bars < 2:
@@ -926,163 +1017,269 @@ def compute_orb_execution(side, symbol, bar_data, prev_close=0.0, capital=10000,
     res["bar0_range_pct"] = bar0_range_pct
 
     # Gap Calculation relative to Previous Day Close
-    if prev_close > 0:
-        gap_pct = round(((bar0_open - prev_close) / prev_close) * 100, 2)
-    else:
-        gap_pct = 0.0
+    gap_pct = round(((bar0_open - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
     res["gap_pct"] = gap_pct
 
-    # 1. Opening Condition Check (Open vs Prev Close & Nuance Gap Rule)
+    # Evaluate individual rule failures
+    filter_open_prev_failed = False
+    filter_extreme_gap_failed = False
+    filter_erratic_range_failed = (bar0_range_pct > 2.0)
+
     if prev_close > 0:
         if side == "BUY":
-            # Condition 1: Must open above or equal to previous day close
             if bar0_open < prev_close:
-                res["gap_filtered"] = True
-                res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Opened BELOW Prev Close: &#8377;{fmt(bar0_open)} &lt; &#8377;{fmt(prev_close)} [{gap_pct}%])</span>'
-                return res
-            # Nuance Gap Rule: Extreme runaway gap (> +2.5%) causes buyer exhaustion
+                filter_open_prev_failed = True
             if gap_pct > 2.5:
-                res["gap_filtered"] = True
-                res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Excessive Gap-Up: +{gap_pct}% &gt; 2.5% exhaustion threshold)</span>'
-                return res
-
+                filter_extreme_gap_failed = True
         else: # SELL / SHORT
-            # Condition 1: Must open below or equal to previous day close
             if bar0_open > prev_close:
-                res["gap_filtered"] = True
-                res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Opened ABOVE Prev Close: &#8377;{fmt(bar0_open)} &gt; &#8377;{fmt(prev_close)} [+{gap_pct}%])</span>'
-                return res
-            # Nuance Gap Rule: Extreme panic gap (< -2.5%) causes sudden short-covering bounce
+                filter_open_prev_failed = True
             if gap_pct < -2.5:
-                res["gap_filtered"] = True
-                res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Excessive Gap-Down: {gap_pct}% &gt; 2.5% exhaustion threshold)</span>'
-                return res
+                filter_extreme_gap_failed = True
 
-    # 2. Erratic 2% filter check on 1st candle
-    if bar0_range_pct > 2.0:
-        res["erratic_filtered"] = True
-        res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (1st 5m range: {bar0_range_pct}% &gt; 2.0% threshold)</span>'
-        return res
-
-    triggered = False
-    entry_price = 0.0
-    entry_bar = -1
+    res["filter_open_prev_failed"] = filter_open_prev_failed
+    res["filter_extreme_gap_failed"] = filter_extreme_gap_failed
+    res["filter_erratic_range_failed"] = filter_erratic_range_failed
 
     buying_power = capital * margin
 
+    # Unconditional simulation of breakout execution
     if side == "BUY":
-        # SL for BUY is Day's Low
         sl_price = days_low
-        res["sl_price"] = sl_price
+        sim_triggered = False
+        sim_entry_price = 0.0
+        sim_entry_bar = -1
 
-        # Enter on High break of 1st candle (evaluated from Bar 1 to end of day)
         for i in range(1, n_bars):
             if bars_high[i] > bar0_high:
-                triggered = True
-                entry_price = max(bars_open[i], bar0_high)
-                entry_bar = i
+                sim_triggered = True
+                sim_entry_price = max(bars_open[i], bar0_high)
+                sim_entry_bar = i
                 break
 
-        if not triggered:
-            res["status_html"] = f'<span class="pnl-tag pnl-notrig">&#9203; Not triggered (Did not break 1st candle High &#8377;{fmt(bar0_high)}) &middot; SL: &#8377;{fmt(sl_price)} (Day\'s Low)</span>'
-            return res
+        if not sim_triggered:
+            res["sim_sl_price"] = sl_price
+        else:
+            sl_hit = False
+            exit_bar = -1
+            exit_price = ltp
+            exit_reason = "LTP"
+            max_favorable_price = sim_entry_price
 
-        # After entry, check if Stop Loss (Day's Low) was triggered on subsequent bars
-        sl_hit = False
-        exit_bar = -1
-        exit_price = ltp
-        exit_reason = "LTP"
+            for k in range(sim_entry_bar, n_bars):
+                if bars_high[k] > max_favorable_price:
+                    max_favorable_price = bars_high[k]
+                if bars_low[k] <= sl_price:
+                    sl_hit = True
+                    exit_price = sl_price
+                    exit_reason = "SL Hit"
+                    exit_bar = k
+                    break
 
-        for k in range(entry_bar, n_bars):
-            if bars_low[k] <= sl_price:
-                sl_hit = True
-                exit_price = sl_price
-                exit_reason = "SL Hit"
-                exit_bar = k
-                break
+            qty = max(1, int(buying_power / sim_entry_price))
+            total_exposure = round(sim_entry_price * qty, 2)
+            margin_used = round(total_exposure / margin, 2)
+            pnl = round((exit_price - sim_entry_price) * qty, 2)
+            pnl_pct = round((pnl / margin_used) * 100, 2)
 
-        qty = max(1, int(buying_power / entry_price))
-        total_exposure = round(entry_price * qty, 2)
-        margin_used = round(total_exposure / margin, 2)
-        pnl = round((exit_price - entry_price) * qty, 2)
-        pnl_pct = round((pnl / margin_used) * 100, 2)
+            per_share_risk = max(round(sim_entry_price - sl_price, 2), 0.05)
+            total_risk_rupees = round(per_share_risk * qty, 2)
+            risk_pct = round((total_risk_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
+            max_profit_rupees = round(max(max_favorable_price - sim_entry_price, 0.0) * qty, 2)
+            max_profit_pct = round((max_profit_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
+            trigger_time = bars_time[sim_entry_bar] if sim_entry_bar < len(bars_time) else "09:20"
+            exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
 
-        res["triggered"] = True
-        res["entry_price"] = entry_price
-        res["entry_bar"] = entry_bar
-        res["exit_price"] = exit_price
-        res["exit_reason"] = exit_reason
-        res["qty"] = qty
-        res["exposure"] = total_exposure
-        res["margin_used"] = margin_used
-        res["capital_used"] = margin_used
-        res["pnl"] = pnl
-        res["pnl_pct"] = pnl_pct
+            target_1to1 = round(sim_entry_price + per_share_risk, 2)
+            target_1to1_hit = False
+            target_1to1_time = "-"
 
-        sign_str = "+" if pnl >= 0 else ""
-        cls = "pnl-profit" if pnl >= 0 else "pnl-loss"
-        icon = "&#128176;" if pnl >= 0 else "&#128308;"
-        exit_info = f"🛑 SL Hit @ &#8377;{fmt(exit_price, 1)} (Day's Low)" if sl_hit else f"&rarr; LTP: &#8377;{fmt(ltp, 1)} (SL: &#8377;{fmt(sl_price, 1)} Safe)"
+            for m in range(sim_entry_bar, n_bars):
+                if bars_high[m] >= target_1to1:
+                    target_1to1_hit = True
+                    target_1to1_time = bars_time[m] if m < len(bars_time) else "1:1 Hit"
+                    break
+                if bars_low[m] <= sl_price:
+                    break
 
-        res["status_html"] = f'<span class="pnl-tag {cls}">{icon} P&amp;L ({sign_str}&#8377;{fmt(pnl, 1)} / {sign_str}{fmt(pnl_pct, 2)}% on &#8377;{fmt(margin_used, 0)} margin) &nbsp;&middot;&nbsp; 5X Qty: {qty} @ &#8377;{fmt(entry_price, 1)} (Exposure: &#8377;{fmt(total_exposure, 0)}) &nbsp;&middot;&nbsp; {exit_info}</span>'
-        return res
+            if target_1to1_hit:
+                pnl_1to1 = round(total_risk_rupees, 2)
+                pnl_1to1_pct = round(risk_pct, 2)
+            elif sl_hit:
+                pnl_1to1 = -round(total_risk_rupees, 2)
+                pnl_1to1_pct = -round(risk_pct, 2)
+            else:
+                pnl_1to1 = pnl
+                pnl_1to1_pct = pnl_pct
+
+            res["sim_triggered"] = True
+            res["sim_entry_price"] = sim_entry_price
+            res["sim_trigger_time"] = trigger_time
+            res["sim_sl_price"] = sl_price
+            res["sim_exit_price"] = exit_price
+            res["sim_exit_time"] = exit_time
+            res["sim_exit_reason"] = exit_reason
+            res["sim_qty"] = qty
+            res["sim_margin_used"] = margin_used
+            res["sim_risk_rupees"] = total_risk_rupees
+            res["sim_risk_pct"] = risk_pct
+            res["sim_max_profit_rupees"] = max_profit_rupees
+            res["sim_max_profit_pct"] = max_profit_pct
+            res["sim_target_1to1"] = target_1to1
+            res["sim_target_1to1_hit"] = target_1to1_hit
+            res["sim_target_1to1_time"] = target_1to1_time
+            res["sim_pnl"] = pnl
+            res["sim_pnl_pct"] = pnl_pct
+            res["sim_pnl_1to1"] = pnl_1to1
+            res["sim_pnl_1to1_pct"] = pnl_1to1_pct
 
     else: # SELL / SHORT
-        # SL for SELL is Day's High
         sl_price = days_high
-        res["sl_price"] = sl_price
+        sim_triggered = False
+        sim_entry_price = 0.0
+        sim_entry_bar = -1
 
-        # Enter on Low break of 1st candle
         for i in range(1, n_bars):
             if bars_low[i] < bar0_low:
-                triggered = True
-                entry_price = min(bars_open[i], bar0_low)
-                entry_bar = i
+                sim_triggered = True
+                sim_entry_price = min(bars_open[i], bar0_low)
+                sim_entry_bar = i
                 break
 
-        if not triggered:
-            res["status_html"] = f'<span class="pnl-tag pnl-notrig">&#9203; Not triggered (Did not break 1st candle Low &#8377;{fmt(bar0_low)}) &middot; SL: &#8377;{fmt(sl_price)} (Day\'s High)</span>'
-            return res
+        if not sim_triggered:
+            res["sim_sl_price"] = sl_price
+        else:
+            sl_hit = False
+            exit_bar = -1
+            exit_price = ltp
+            exit_reason = "LTP"
+            min_favorable_price = sim_entry_price
 
-        # After entry, check if Stop Loss (Day's High) was triggered on subsequent bars
-        sl_hit = False
-        exit_bar = -1
-        exit_price = ltp
-        exit_reason = "LTP"
+            for k in range(sim_entry_bar, n_bars):
+                if bars_low[k] < min_favorable_price:
+                    min_favorable_price = bars_low[k]
+                if bars_high[k] >= sl_price:
+                    sl_hit = True
+                    exit_price = sl_price
+                    exit_reason = "SL Hit"
+                    exit_bar = k
+                    break
 
-        for k in range(entry_bar, n_bars):
-            if bars_high[k] >= sl_price:
-                sl_hit = True
-                exit_price = sl_price
-                exit_reason = "SL Hit"
-                exit_bar = k
-                break
+            qty = max(1, int(buying_power / sim_entry_price))
+            total_exposure = round(sim_entry_price * qty, 2)
+            margin_used = round(total_exposure / margin, 2)
+            pnl = round((sim_entry_price - exit_price) * qty, 2)
+            pnl_pct = round((pnl / margin_used) * 100, 2)
 
-        qty = max(1, int(buying_power / entry_price))
-        total_exposure = round(entry_price * qty, 2)
-        margin_used = round(total_exposure / margin, 2)
-        pnl = round((entry_price - exit_price) * qty, 2)
-        pnl_pct = round((pnl / margin_used) * 100, 2)
+            per_share_risk = max(round(sl_price - sim_entry_price, 2), 0.05)
+            total_risk_rupees = round(per_share_risk * qty, 2)
+            risk_pct = round((total_risk_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
+            max_profit_rupees = round(max(sim_entry_price - min_favorable_price, 0.0) * qty, 2)
+            max_profit_pct = round((max_profit_rupees / margin_used * 100), 2) if margin_used > 0 else 0.0
+            trigger_time = bars_time[sim_entry_bar] if sim_entry_bar < len(bars_time) else "09:20"
+            exit_time = bars_time[exit_bar] if (sl_hit and exit_bar < len(bars_time)) else "15:10"
 
-        res["triggered"] = True
-        res["entry_price"] = entry_price
-        res["entry_bar"] = entry_bar
-        res["exit_price"] = exit_price
-        res["exit_reason"] = exit_reason
-        res["qty"] = qty
-        res["exposure"] = total_exposure
-        res["margin_used"] = margin_used
-        res["capital_used"] = margin_used
-        res["pnl"] = pnl
-        res["pnl_pct"] = pnl_pct
+            target_1to1 = round(sim_entry_price - per_share_risk, 2)
+            target_1to1_hit = False
+            target_1to1_time = "-"
 
-        sign_str = "+" if pnl >= 0 else ""
-        cls = "pnl-profit" if pnl >= 0 else "pnl-loss"
-        icon = "&#128176;" if pnl >= 0 else "&#128308;"
-        exit_info = f"&#128721; SL Hit @ &#8377;{fmt(exit_price, 1)} (Day's High)" if sl_hit else f"&rarr; LTP: &#8377;{fmt(ltp, 1)} (SL: &#8377;{fmt(sl_price, 1)} Safe)"
+            for m in range(sim_entry_bar, n_bars):
+                if bars_low[m] <= target_1to1:
+                    target_1to1_hit = True
+                    target_1to1_time = bars_time[m] if m < len(bars_time) else "1:1 Hit"
+                    break
+                if bars_high[m] >= sl_price:
+                    break
 
-        res["status_html"] = f'<span class="pnl-tag {cls}">{icon} P&amp;L ({sign_str}&#8377;{fmt(pnl, 1)} / {sign_str}{fmt(pnl_pct, 2)}% on &#8377;{fmt(margin_used, 0)} margin) &nbsp;&middot;&nbsp; 5X Qty: {qty} Shorted @ &#8377;{fmt(entry_price, 1)} (Exposure: &#8377;{fmt(total_exposure, 0)}) &nbsp;&middot;&nbsp; {exit_info}</span>'
+            if target_1to1_hit:
+                pnl_1to1 = round(total_risk_rupees, 2)
+                pnl_1to1_pct = round(risk_pct, 2)
+            elif sl_hit:
+                pnl_1to1 = -round(total_risk_rupees, 2)
+                pnl_1to1_pct = -round(risk_pct, 2)
+            else:
+                pnl_1to1 = pnl
+                pnl_1to1_pct = pnl_pct
+
+            res["sim_triggered"] = True
+            res["sim_entry_price"] = sim_entry_price
+            res["sim_trigger_time"] = trigger_time
+            res["sim_sl_price"] = sl_price
+            res["sim_exit_price"] = exit_price
+            res["sim_exit_time"] = exit_time
+            res["sim_exit_reason"] = exit_reason
+            res["sim_qty"] = qty
+            res["sim_margin_used"] = margin_used
+            res["sim_risk_rupees"] = total_risk_rupees
+            res["sim_risk_pct"] = risk_pct
+            res["sim_max_profit_rupees"] = max_profit_rupees
+            res["sim_max_profit_pct"] = max_profit_pct
+            res["sim_target_1to1"] = target_1to1
+            res["sim_target_1to1_hit"] = target_1to1_hit
+            res["sim_target_1to1_time"] = target_1to1_time
+            res["sim_pnl"] = pnl
+            res["sim_pnl_pct"] = pnl_pct
+            res["sim_pnl_1to1"] = pnl_1to1
+            res["sim_pnl_1to1_pct"] = pnl_1to1_pct
+
+    # Now apply active rules for the current output state
+    is_gap_filtered = (rule_open_prev and filter_open_prev_failed) or (rule_extreme_gap and filter_extreme_gap_failed)
+    is_erratic_filtered = (rule_erratic and filter_erratic_range_failed)
+    res["gap_filtered"] = is_gap_filtered
+    res["erratic_filtered"] = is_erratic_filtered
+
+    if is_gap_filtered:
+        if filter_open_prev_failed and rule_open_prev:
+            op_txt = f"Opened BELOW Prev Close: &#8377;{fmt(bar0_open)} &lt; &#8377;{fmt(prev_close)} [{gap_pct}%]" if side == "BUY" else f"Opened ABOVE Prev Close: &#8377;{fmt(bar0_open)} &gt; &#8377;{fmt(prev_close)} [+{gap_pct}%]"
+            res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out ({op_txt})</span>'
+        else:
+            res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (Excessive Gap: {gap_pct}% &gt; 2.5% exhaustion threshold)</span>'
         return res
+
+    if is_erratic_filtered:
+        res["status_html"] = f'<span class="pnl-tag pnl-eratic">&#9888; Filtered Out (1st 5m range: {bar0_range_pct}% &gt; 2.0% threshold)</span>'
+        return res
+
+    # Passed active filters: populate final trade execution state
+    if not res["sim_triggered"]:
+        level_lbl = "High" if side == "BUY" else "Low"
+        break_val = bar0_high if side == "BUY" else bar0_low
+        sl_lbl = "Day's Low" if side == "BUY" else "Day's High"
+        res["status_html"] = f'<span class="pnl-tag pnl-notrig">&#9203; Not triggered (Did not break 1st candle {level_lbl} &#8377;{fmt(break_val)}) &middot; SL: &#8377;{fmt(sl_price)} ({sl_lbl})</span>'
+        return res
+
+    res["triggered"] = True
+    res["entry_price"] = res["sim_entry_price"]
+    res["trigger_time"] = res["sim_trigger_time"]
+    res["sl_price"] = res["sim_sl_price"]
+    res["exit_price"] = res["sim_exit_price"]
+    res["exit_reason"] = res["sim_exit_reason"]
+    res["exit_time"] = res["sim_exit_time"]
+    res["qty"] = res["sim_qty"]
+    res["exposure"] = round(res["sim_entry_price"] * res["sim_qty"], 2)
+    res["margin_used"] = res["sim_margin_used"]
+    res["capital_used"] = res["sim_margin_used"]
+    res["risk_rupees"] = res["sim_risk_rupees"]
+    res["risk_pct"] = res["sim_risk_pct"]
+    res["max_profit_rupees"] = res["sim_max_profit_rupees"]
+    res["max_profit_pct"] = res["sim_max_profit_pct"]
+    res["pnl"] = res["sim_pnl"]
+    res["pnl_pct"] = res["sim_pnl_pct"]
+    res["target_1to1"] = res["sim_target_1to1"]
+    res["target_1to1_hit"] = res["sim_target_1to1_hit"]
+    res["target_1to1_time"] = res["sim_target_1to1_time"]
+    res["pnl_1to1"] = res["sim_pnl_1to1"]
+    res["pnl_1to1_pct"] = res["sim_pnl_1to1_pct"]
+
+    sign_str = "+" if res["pnl"] >= 0 else ""
+    cls = "pnl-profit" if res["pnl"] >= 0 else "pnl-loss"
+    icon = "&#128176;" if res["pnl"] >= 0 else "&#128308;"
+    side_action = "Qty" if side == "BUY" else "Qty Shorted"
+    sl_name = "Day's Low" if side == "BUY" else "Day's High"
+    exit_info = f"&#128721; SL Hit @ &#8377;{fmt(res['exit_price'], 1)} ({sl_name})" if res["exit_reason"] == "SL Hit" else f"&rarr; LTP: &#8377;{fmt(ltp, 1)} (SL: &#8377;{fmt(res['sl_price'], 1)} Safe)"
+
+    res["status_html"] = f'<span class="pnl-tag {cls}">{icon} P&amp;L ({sign_str}&#8377;{fmt(res["pnl"], 1)} / {sign_str}{fmt(res["pnl_pct"], 2)}% on &#8377;{fmt(res["margin_used"], 0)} margin) &nbsp;&middot;&nbsp; 5X {side_action}: {res["qty"]} @ &#8377;{fmt(res["entry_price"], 1)} (Exposure: &#8377;{fmt(res["exposure"], 0)}) &nbsp;&middot;&nbsp; {exit_info}</span>'
+    return res
 
 def fetch_intraday_5m_bars(symbols, target_date=None):
     """
@@ -1091,6 +1288,23 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
     If target_date (str YYYY-MM-DD or date object) is provided, extracts that specific session's bars.
     """
     from tv_candles import fetch_tv_candles
+
+    # TradingView symbol name map for NSE tickers with special characters
+    TV_SYMBOL_MAP = {
+        "BAJAJ-AUTO": "BAJAJ_AUTO",
+        "M&M":        "M_M",
+        "M&MFIN":     "M_MFIN",
+        "L&TFH":      "L_TFH",
+    }
+
+    def _tv_sym_variants(s):
+        mapped = TV_SYMBOL_MAP.get(s)
+        variants = [mapped, s] if mapped else [s]
+        alt = s.replace("-", "_").replace("&", "")
+        if alt not in variants:
+            variants.append(alt)
+        return variants
+
     target_dt_str = target_date.strftime("%Y-%m-%d") if isinstance(target_date, (date, datetime)) else target_date
 
     print(f"[*] Fetching 5-minute intraday candles from TradingView for {len(symbols)} candidates (Session: {target_dt_str or 'latest'})...")
@@ -1098,28 +1312,34 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
     missing_symbols = []
 
     for s in symbols:
-        try:
-            tv_bars = fetch_tv_candles(s, exchange="NSE", interval="5", n_bars=150)
-            if tv_bars:
+        got_data = False
+        for sym_try in _tv_sym_variants(s):
+            try:
+                tv_bars = fetch_tv_candles(sym_try, exchange="NSE", interval="5", n_bars=500)
+                if not tv_bars:
+                    continue
                 # Filter for target_date
                 if target_dt_str:
                     filtered = [b for b in tv_bars if datetime.fromtimestamp(b["time"]).strftime("%Y-%m-%d") == target_dt_str]
                 else:
                     last_day = datetime.fromtimestamp(tv_bars[-1]["time"]).strftime("%Y-%m-%d")
                     filtered = [b for b in tv_bars if datetime.fromtimestamp(b["time"]).strftime("%Y-%m-%d") == last_day]
-
                 if filtered:
                     results[s] = {
-                        "valid": True,
-                        "open":  [b["open"] for b in filtered],
-                        "high":  [b["high"] for b in filtered],
-                        "low":   [b["low"] for b in filtered],
-                        "close": [b["close"] for b in filtered],
+                        "valid":  True,
+                        "open":   [b["open"]  for b in filtered],
+                        "high":   [b["high"]  for b in filtered],
+                        "low":    [b["low"]   for b in filtered],
+                        "close":  [b["close"] for b in filtered],
+                        "volume": [b.get("volume", 0.0) for b in filtered],
+                        "times":  [datetime.fromtimestamp(b["time"]).strftime("%H:%M") for b in filtered],
                     }
-                    continue
-        except Exception as e:
-            pass
-        missing_symbols.append(s)
+                    got_data = True
+                    break
+            except Exception:
+                pass
+        if not got_data:
+            missing_symbols.append(s)
 
     # Fallback to yfinance only if TradingView missed any symbol
     if missing_symbols:
@@ -1148,9 +1368,28 @@ def fetch_intraday_5m_bars(symbols, target_date=None):
                     "high":  [round(float(x), 2) for x in sub["High"]],
                     "low":   [round(float(x), 2) for x in sub["Low"]],
                     "close": [round(float(x), 2) for x in sub["Close"]],
+                    "times": [idx.strftime("%H:%M") for idx in sub.index],
                 }
         except Exception:
             pass
+
+    # Persist 5m candles + any missing symbol exceptions into SQLite
+    if target_dt_str:
+        try:
+            import db_store
+            saved_bars = 0
+            for sym_k, b_data in results.items():
+                saved_bars += db_store.save_intraday_candles(target_dt_str, sym_k, b_data)
+            for ms in missing_symbols:
+                if ms not in results:
+                    db_store.log_trade_exception(
+                        target_dt_str, ms, "CANDLE_FETCH", "NO_CANDLE_DATA",
+                        "Neither TradingView nor yfinance returned 5m bars"
+                    )
+            if saved_bars:
+                print(f"[DB] Saved {saved_bars} 5m candles for {target_dt_str}.")
+        except Exception as e:
+            print(f"[warn] DB candle save failed: {e}")
 
     return results
 
@@ -1674,6 +1913,1105 @@ def build_historic_analysis(session, ref_date):
     """
     return html
 
+# ─── HISTORIC TRADE JOURNAL & DATABASE ──────────────────────────────────────
+JOURNAL_DB_FILE = os.path.join(OUT_DIR, "trade_history.json")
+
+def load_trade_journal():
+    if os.path.exists(JOURNAL_DB_FILE):
+        try:
+            with open(JOURNAL_DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_trade_journal(journal):
+    try:
+        with open(JOURNAL_DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(journal, f, indent=2)
+    except Exception as e:
+        print(f"[warn] Could not save trade journal: {e}")
+
+def record_trades_to_journal(executed_trades, session_date_str):
+    """
+    Appends or updates the trades executed during session_date_str into trade_history.json.
+    Ensures no duplicate entries for the same date and symbol.
+    """
+    journal = load_trade_journal()
+    new_syms = {t.get("symbol") for t in executed_trades if t.get("symbol")}
+    if new_syms:
+        before_len = len(journal)
+        journal = [item for item in journal if not (item.get("date") == session_date_str and item.get("symbol") not in new_syms)]
+        updated = len(journal) != before_len
+    else:
+        updated = False
+    for t in executed_trades:
+        key = f"{session_date_str}_{t.get('symbol')}"
+        record = {
+            "date": session_date_str,
+            "symbol": t["symbol"],
+            "side": t["side"],
+            "triggered": t["triggered"],
+            "trigger_time": t.get("trigger_time", "-"),
+            "entry_price": t.get("entry_price", 0.0),
+            "sl_price": t.get("sl_price", 0.0),
+            "qty": t.get("qty", 0),
+            "risk_rupees": t.get("risk_rupees", 0.0),
+            "risk_pct": t.get("risk_pct", 0.0),
+            "max_profit_rupees": t.get("max_profit_rupees", 0.0),
+            "max_profit_pct": t.get("max_profit_pct", 0.0),
+            "exit_price": t.get("exit_price", 0.0),
+            "exit_time": t.get("exit_time", "15:10"),
+            "exit_reason": t.get("exit_reason", "-"),
+            "margin_used": t.get("margin_used", 0.0),
+            "pnl": t.get("pnl", 0.0),
+            "pnl_pct": t.get("pnl_pct", 0.0),
+            "target_1to1": t.get("target_1to1", 0.0),
+            "target_1to1_hit": t.get("target_1to1_hit", False),
+            "target_1to1_time": t.get("target_1to1_time", "-"),
+            "pnl_1to1": t.get("pnl_1to1", 0.0),
+            "pnl_1to1_pct": t.get("pnl_1to1_pct", 0.0),
+            "gap_filtered": t.get("gap_filtered", False),
+            "erratic_filtered": t.get("erratic_filtered", False),
+            "prev_close": t.get("prev_close", 0.0),
+            "gap_pct": t.get("gap_pct", 0.0),
+            "bar0_range_pct": t.get("bar0_range_pct", 0.0),
+            "filter_open_prev_failed": t.get("filter_open_prev_failed", False),
+            "filter_extreme_gap_failed": t.get("filter_extreme_gap_failed", False),
+            "filter_erratic_range_failed": t.get("filter_erratic_range_failed", False),
+            "sim_triggered": t.get("sim_triggered", False),
+            "sim_entry_price": t.get("sim_entry_price", 0.0),
+            "sim_trigger_time": t.get("sim_trigger_time", "-"),
+            "sim_sl_price": t.get("sim_sl_price", 0.0),
+            "sim_exit_price": t.get("sim_exit_price", 0.0),
+            "sim_exit_time": t.get("sim_exit_time", "15:10"),
+            "sim_exit_reason": t.get("sim_exit_reason", "LTP"),
+            "sim_qty": t.get("sim_qty", 0),
+            "sim_margin_used": t.get("sim_margin_used", 0.0),
+            "sim_risk_rupees": t.get("sim_risk_rupees", 0.0),
+            "sim_risk_pct": t.get("sim_risk_pct", 0.0),
+            "sim_max_profit_rupees": t.get("sim_max_profit_rupees", 0.0),
+            "sim_max_profit_pct": t.get("sim_max_profit_pct", 0.0),
+            "sim_target_1to1": t.get("sim_target_1to1", 0.0),
+            "sim_target_1to1_hit": t.get("sim_target_1to1_hit", False),
+            "sim_target_1to1_time": t.get("sim_target_1to1_time", "-"),
+            "sim_pnl": t.get("sim_pnl", 0.0),
+            "sim_pnl_pct": t.get("sim_pnl_pct", 0.0),
+            "sim_pnl_1to1": t.get("sim_pnl_1to1", 0.0),
+            "sim_pnl_1to1_pct": t.get("sim_pnl_1to1_pct", 0.0),
+        }
+
+        # Update if exists, or append
+        replaced = False
+        for idx, item in enumerate(journal):
+            if f"{item.get('date')}_{item.get('symbol')}" == key:
+                journal[idx] = record
+                replaced = True
+                updated = True
+                break
+        if not replaced:
+            journal.append(record)
+            updated = True
+
+    if updated:
+        save_trade_journal(journal)
+
+    # Persist executions & filter exceptions to SQLite database
+    try:
+        import db_store
+        db_store.save_trade_executions(session_date_str, executed_trades)
+        for t in executed_trades:
+            if t.get("gap_filtered"):
+                db_store.log_trade_exception(
+                    session_date_str, t["symbol"], "ORB_FILTER", "GAP_FILTER",
+                    f"side={t.get('side')} gap_pct={t.get('gap_pct', 0)}%"
+                )
+            elif t.get("erratic_filtered"):
+                db_store.log_trade_exception(
+                    session_date_str, t["symbol"], "ORB_FILTER", "ERRATIC_2PCT",
+                    f"side={t.get('side')} bar0_range_pct={t.get('bar0_range_pct', 0)}%"
+                )
+    except Exception as e:
+        print(f"[warn] DB trade execution save failed: {e}")
+
+    return journal
+
+def build_journal_tab(journal):
+    """
+    Renders Tab 4: Comprehensive Trade Journal & Cumulative Performance Metrics.
+    Maintains executed trades grouped session by session with daily breaks and P&L totals,
+    with an interactive filter to toggle between All Candidates vs Only Executed Trades.
+    """
+    if not journal:
+        return """<div class="sec" style="padding:25px;margin:12px;text-align:center">
+          <h3 style="color:#fff;margin-bottom:8px">&#128220; No Historic Trades Recorded Yet</h3>
+          <p style="color:var(--muted);font-size:11px">The trade journal automatically builds up as each day's trades complete at 3:10 PM.</p>
+        </div>"""
+
+    # Filter triggered trades for performance stats
+    trig_trades = [t for t in journal if t.get("triggered")]
+    total_trades = len(trig_trades)
+    total_pnl = round(sum(t.get("pnl", 0.0) for t in trig_trades), 2)
+    wins = [t for t in trig_trades if t.get("pnl", 0.0) > 0]
+    losses = [t for t in trig_trades if t.get("pnl", 0.0) < 0]
+    win_rate = round((len(wins) / total_trades * 100), 1) if total_trades > 0 else 0.0
+
+    total_profit = sum(t.get("pnl", 0.0) for t in wins)
+    total_loss = abs(sum(t.get("pnl", 0.0) for t in losses))
+    profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else (round(total_profit, 2) if total_profit > 0 else 0.0)
+
+    # Calculate cumulative points for equity curve DAY-WISE (chronological)
+    all_dates_asc = sorted(list(set(t.get("date", "") for t in journal if t.get("date"))))
+    curve_labels = ["Start"]
+    curve_normal = [0.0]
+    curve_1to1 = [0.0]
+    cum_norm = 0.0
+    cum_1to1 = 0.0
+
+    for d in all_dates_asc:
+        day_trig_trades = [t for t in journal if t.get("date") == d and t.get("triggered")]
+        day_norm_sum = sum(t.get("pnl", 0.0) for t in day_trig_trades)
+        day_1to1_sum = sum(t.get("pnl_1to1", 0.0) for t in day_trig_trades)
+        cum_norm += day_norm_sum
+        cum_1to1 += day_1to1_sum
+        curve_labels.append(d)
+        curve_normal.append(round(cum_norm, 1))
+        curve_1to1.append(round(cum_1to1, 1))
+
+    total_risk = sum(t.get("risk_rupees", 0.0) for t in trig_trades)
+    total_max_profit = sum(t.get("max_profit_rupees", 0.0) for t in trig_trades)
+
+    pnl_sign = "+" if total_pnl >= 0 else ""
+    pnl_color = "var(--green)" if total_pnl >= 0 else "var(--red)"
+
+    total_1to1_pnl = round(cum_1to1, 2)
+    pnl_1to1_sign = "+" if total_1to1_pnl >= 0 else ""
+    pnl_1to1_color = "var(--green)" if total_1to1_pnl >= 0 else "var(--red)"
+
+    # Group trades by date (sorted latest date first)
+    dates_desc = sorted(list(set(t.get("date", "") for t in journal if t.get("date"))), reverse=True)
+
+    tbody_html = ""
+    for d in dates_desc:
+        day_trades = [t for t in journal if t.get("date") == d]
+        day_trig = [t for t in day_trades if t.get("triggered")]
+        day_pnl = round(sum(t.get("pnl", 0.0) for t in day_trig), 2)
+        day_sign = "+" if day_pnl >= 0 else ""
+        day_color = "var(--green)" if day_pnl >= 0 else ("var(--red)" if day_pnl < 0 else "var(--muted)")
+        day_margin = sum(t.get("margin_used", 0.0) for t in day_trig)
+        day_roi = round(day_pnl / max(day_margin, 1) * 100, 2) if day_margin > 0 else 0.0
+
+        day_1to1 = round(sum(t.get("pnl_1to1", 0.0) for t in day_trig), 2)
+        day_1to1_sign = "+" if day_1to1 >= 0 else ""
+        day_1to1_color = "var(--green)" if day_1to1 >= 0 else ("var(--red)" if day_1to1 < 0 else "var(--muted)")
+
+        # Day Header Break / Separator Row
+        tbody_html += f"""<tr class="journal-day-header" id="day-header-{d}" style="background:#0f1522;border-top:2px solid var(--blue);border-bottom:1px solid #28324a">
+          <td colspan="9" style="padding:10px 14px;font-size:12px;font-weight:700">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+              <span id="day-header-title-{d}" style="color:#fff">&#128197; Trading Session: <span style="color:var(--blue)">{d}</span> ({len(day_trig)} / {len(day_trades)} Executed)</span>
+              <div style="display:flex;gap:16px;align-items:center">
+                <span id="day-header-1to1-{d}">1:1 Target Net P&amp;L: <b style="color:{day_1to1_color};font-size:13px">{day_1to1_sign}&#8377;{fmt(day_1to1, 1)}</b></span>
+                <span id="day-header-norm-{d}">Normal Net P&amp;L (3:10 PM): <b style="color:{day_color};font-size:13px">{day_sign}&#8377;{fmt(day_pnl, 1)}</b> ({day_sign}{day_roi}% 5X ROI)</span>
+              </div>
+            </div>
+          </td>
+        </tr>"""
+
+        # Trades for this date
+        for idx, t in enumerate(day_trades, 1):
+            side_badge = f'<span class="rank-badge rank-buy">BUY</span>' if t["side"] == "BUY" else f'<span class="rank-badge rank-sell">SELL</span>'
+            row_class = "journal-row-exec" if t["triggered"] else "journal-row-unexec"
+
+            if t["triggered"]:
+                now_ist = datetime.now()
+                is_live_intraday = (t.get("date") == now_ist.strftime("%Y-%m-%d")) and (now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 10))
+                sign = "+" if t["pnl"] >= 0 else ""
+                pnl_cls = "pos" if t["pnl"] >= 0 else "neg"
+                pnl_cell = f'<span class="pc {pnl_cls}">{sign}&#8377;{fmt(t["pnl"], 1)} ({sign}{fmt(t["pnl_pct"], 2)}%)</span>'
+                if t.get("exit_reason") == "SL Hit":
+                    status_txt = f'<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>'
+                    details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
+                elif is_live_intraday:
+                    status_txt = '<span style="color:var(--blue);font-weight:700">&#128994; In Trade</span>'
+                    details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; LTP: &#8377;{fmt(t.get('exit_price',0),1)} (Live)"
+                else:
+                    status_txt = '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>'
+                    details = f"Trigger: <b>{t.get('trigger_time','-')}</b> &middot; Qty: <b>{t.get('qty',0)}</b> @ &#8377;{fmt(t.get('entry_price',0),1)} &rarr; Exit: &#8377;{fmt(t.get('exit_price',0),1)} ({t.get('exit_time','-')})"
+                risk_cell = f"<span style='color:#ff7799'>&#8377;{fmt(t.get('risk_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--muted)'>({t.get('risk_pct',0)}% risk)</span></span>"
+                max_prof_cell = f"<span style='color:var(--green);font-weight:700'>+&#8377;{fmt(t.get('max_profit_rupees',0),1)}<br><span style='font-size:9.5px;color:var(--green)'>({t.get('max_profit_pct',0)}% peak)</span></span>"
+                sign_1to1 = "+" if t.get("pnl_1to1", 0.0) >= 0 else ""
+                cls_1to1 = "pos" if t.get("pnl_1to1", 0.0) >= 0 else "neg"
+                if t.get("target_1to1_hit"):
+                    hit_note = f"<span style='font-size:9.5px;color:var(--green)'>&#10004; Hit @ {t.get('target_1to1_time')}</span>"
+                elif t.get("exit_reason") == "SL Hit":
+                    hit_note = "<span style='font-size:9.5px;color:var(--red)'>&#10006; Stopped Out</span>"
+                elif is_live_intraday:
+                    hit_note = "<span style='font-size:9.5px;color:var(--blue)'>&#128994; In Trade</span>"
+                else:
+                    hit_note = "<span style='font-size:9.5px;color:var(--yel)'>&#9200; 3:10 PM Squareoff</span>"
+                pnl_1to1_cell = f'<span class="pc {cls_1to1}">{sign_1to1}&#8377;{fmt(t.get("pnl_1to1",0), 1)} ({sign_1to1}{fmt(t.get("pnl_1to1_pct",0), 2)}%)</span><br>{hit_note}'
+            elif t.get("gap_filtered"):
+                pnl_cell = '<span class="neu">&#8377;0.00</span>'
+                status_txt = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>'
+                details = "<span style='color:var(--muted)'>Disqualified by opening gap alignment</span>"
+                risk_cell = "-"
+                max_prof_cell = "-"
+                pnl_1to1_cell = '<span class="neu">&#8377;0.00</span>'
+            elif t.get("erratic_filtered"):
+                pnl_cell = '<span class="neu">&#8377;0.00</span>'
+                status_txt = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>'
+                details = "<span style='color:var(--muted)'>1st 5-min candle range &gt; 2.0%</span>"
+                risk_cell = "-"
+                max_prof_cell = "-"
+                pnl_1to1_cell = '<span class="neu">&#8377;0.00</span>'
+            else:
+                pnl_cell = '<span class="neu">&#8377;0.00</span>'
+                status_txt = '<span class="neu">&#9203; Not Triggered</span>'
+                details = "<span style='color:var(--muted)'>Price never broke 1st 5-min breakout level</span>"
+                risk_cell = "-"
+                max_prof_cell = "-"
+                pnl_1to1_cell = '<span class="neu">&#8377;0.00</span>'
+
+            row_id = f"trade-row-{t.get('date')}-{t.get('symbol')}"
+            tbody_html += f"""<tr class="{row_class}" id="{row_id}">
+              <td><span style="color:var(--muted)">#{idx}</span> <b>{t.get('date')}</b></td>
+              <td><b>{t['symbol']}</b></td>
+              <td>{side_badge}</td>
+              <td class="cell-status">{status_txt}</td>
+              <td class="cell-details">{details}</td>
+              <td class="cell-risk">{risk_cell}</td>
+              <td class="cell-maxprof">{max_prof_cell}</td>
+              <td class="cell-1to1">{pnl_1to1_cell}</td>
+              <td class="cell-norm">{pnl_cell}</td>
+            </tr>"""
+
+    raw_html = f"""
+    <!-- JOURNAL HERO METRICS -->
+    <div class="pnl-hero">
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Cumulative Normal P&amp;L (3:10 PM)</div>
+        <div class="pnl-kpi-val" id="kpi-normal-pnl-val" style="color:{pnl_color}">{pnl_sign}&#8377;{fmt(total_pnl, 1)}</div>
+        <div class="pnl-kpi-sub" id="kpi-normal-trades-sub">Total Triggered Trades: <b>{total_trades}</b></div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Cumulative 1:1 Target P&amp;L</div>
+        <div class="pnl-kpi-val" id="kpi-1to1-pnl-val" style="color:{pnl_1to1_color}">{pnl_1to1_sign}&#8377;{fmt(total_1to1_pnl, 1)}</div>
+        <div class="pnl-kpi-sub">Fixed 1:1 Risk-Reward Strategy</div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Win Rate %</div>
+        <div class="pnl-kpi-val" id="kpi-winrate-val" style="color:var(--blue)">{win_rate}%</div>
+        <div class="pnl-kpi-sub" id="kpi-wins-losses-sub"><span style="color:var(--green)">{len(wins)} Wins</span> &middot; <span style="color:var(--red)">{len(losses)} Losses</span></div>
+      </div>
+      <div class="pnl-kpi">
+        <div class="pnl-kpi-lbl">Peak Profit Before Exit</div>
+        <div class="pnl-kpi-val" id="kpi-maxprofit-val" style="color:var(--green)">+&#8377;{fmt(total_max_profit, 0)}</div>
+        <div class="pnl-kpi-sub" id="kpi-profitfactor-sub">Profit Factor: <b>{profit_factor}</b></div>
+      </div>
+    </div>
+
+    <!-- DUAL EQUITY CURVE CHART (NORMAL P&L VS 1:1 P&L) -->
+    <div class="sec" style="margin:0 10px 15px 10px;padding:14px">
+      <div class="sh" style="background:#131824;margin:-14px -14px 12px -14px;border-bottom:1px solid var(--border)">
+        <div>&#128200; Comparative Equity Curve: Normal P&amp;L vs 1:1 Target Exit</div>
+        <div style="font-size:10px;display:flex;gap:12px">
+          <span style="color:var(--blue);font-weight:700">&mdash; Normal Intraday P&amp;L (3:10 PM)</span>
+          <span style="color:var(--green);font-weight:700">&mdash; 1:1 Target Exit P&amp;L</span>
+        </div>
+      </div>
+      <div style="width:100%;height:220px;position:relative">
+        <canvas id="equityCurveChart"></canvas>
+      </div>
+    </div>
+
+    <!-- WHAT-IF STRATEGY RULES SIMULATOR CONTROL BAR -->
+    <div class="sec" style="margin:0 10px 15px 10px;padding:12px 16px;background:#101726;border:1px solid #23304c;border-radius:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:13.5px;font-weight:700;color:#fff">&#9881;&#65039; Strategy Mode:</span>
+          <div style="display:inline-flex;background:#0b0f19;border-radius:5px;border:1px solid #1c263c;padding:2px">
+            <button id="btn-mode-default" onclick="setJournalMode('default')" style="background:#1b2438;color:#00ff9d;border:none;padding:5px 12px;border-radius:4px;font-size:11.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px">
+              &#128737;&#65039; Default Strategy (Standard Baseline)
+            </button>
+            <button id="btn-mode-whatif" onclick="setJournalMode('whatif')" style="background:transparent;color:var(--muted);border:none;padding:5px 12px;border-radius:4px;font-size:11.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px">
+              &#129514; Custom What-If Simulator
+            </button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="sim-status-summary" style="font-size:11px;color:var(--green);font-weight:600">
+            &#9679; Default Strategy Active &middot; {total_trades} Executed &middot; Net P&amp;L: {pnl_sign}&#8377;{fmt(total_pnl, 1)}
+          </div>
+          <button id="btn-reset-rules" onclick="resetSimulatorToDefault()" style="display:none;background:#172033;color:var(--blue);border:1px solid #263553;padding:4px 9px;border-radius:4px;font-size:10.5px;cursor:pointer;font-weight:600">
+            &#8634; Reset to Default Settings
+          </button>
+        </div>
+      </div>
+
+      <!-- Simulator Interactive Checkboxes (Visible only in What-If mode) -->
+      <div id="whatif-controls-panel" style="display:none;padding:10px 14px;background:#0b0f19;border-radius:5px;border:1px solid #1c263c;margin-top:6px">
+        <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px">
+          Toggle rules below to backtest alternative entry logic across all historical trades:
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: BUY must open above or equal to Prev Close, SELL must open below or equal to Prev Close">
+            <input type="checkbox" id="sim-rule-open-prev" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
+            <span><b>Rule 1: Open vs Prev Close</b> <span style="color:var(--muted);font-size:10.5px">(BUY &ge; Prev Close, SELL &le; Prev Close)</span></span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: Filter runaway gap-ups (> +2.5%) or panic gap-downs (< -2.5%)">
+            <input type="checkbox" id="sim-rule-extreme-gap" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
+            <span><b>Rule 2: Max Opening Gap</b> <span style="color:var(--muted);font-size:10.5px">(&le; 2.5% exhaustion cap)</span></span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11.5px;color:#fff" title="Toggle rule: Filter stocks where 1st 5-minute candle range exceeds 2.0%">
+            <input type="checkbox" id="sim-rule-erratic" checked onchange="recomputeWhatIfSimulator()" style="accent-color:var(--blue);cursor:pointer;width:15px;height:15px">
+            <span><b>Rule 3: 1st 5-Min Range</b> <span style="color:var(--muted);font-size:10.5px">(&le; 2.0% volatility cap)</span></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- TABLE OF ALL HISTORIC TRADES WITH FILTER & DAILY BREAKS -->
+    <div class="sec" style="margin:0 10px 15px 10px">
+      <div class="sh" style="background:#131824;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>&#128220; Complete Trade Execution History &amp; Risk/Reward Journal</div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button id="btn-journal-refresh" onclick="refreshJournalLivePrices()" style="background:#1b2438;border:1px solid #00c47a;color:#00ff9d;padding:4px 12px;border-radius:5px;font-size:11.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 1px 3px rgba(0,0,0,0.3);transition:all 0.15s" title="Fetch live market prices and update today's trade P&amp;L in real time" onmouseover="this.style.background='#00c47a';this.style.color='#000'" onmouseout="this.style.background='#1b2438';this.style.color='#00ff9d'">
+            <span id="journal-refresh-icon">&#128259;</span>
+            <span id="journal-refresh-lbl">Refresh Live P&amp;L</span>
+          </button>
+          <span id="journal-live-status" style="font-size:10.5px;color:var(--muted)"></span>
+          <label style="font-size:11px;color:#00ff9d;cursor:pointer;display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="journal-exec-filter" checked onchange="onFilterExecutedToggled(this.checked)" style="accent-color:var(--green);cursor:pointer;width:14px;height:14px">
+            <span><b>Show Only Executed Trades</b></span>
+          </label>
+          <span class="badge" style="background:rgba(0,196,122,0.15);color:var(--green)">Permanent Audit Log</span>
+        </div>
+      </div>
+      <div class="tw">
+        <table class="rec-tbl pnl-table" id="journal-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Status</th>
+              <th>Execution Details (Entry &rarr; Exit)</th>
+              <th>Risk Taken (&#8377; &amp; %)</th>
+              <th>Max Profit Reached</th>
+              <th>1:1 Target Exit P&amp;L</th>
+              <th>Normal P&amp;L (3:10 PM)</th>
+            </tr>
+          </thead>
+          <tbody>{tbody_html}</tbody>
+        </table>
+      </div>
+    </div>
+    <!-- Load Chart.js for responsive multi-series equity curve -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+    const HISTORIC_JOURNAL_DATA = __JOURNAL_JSON_PLACEHOLDER__;
+    const TODAY_DATE_STR = "{datetime.now().strftime('%Y-%m-%d')}";
+    const CURRENT_HOUR = {datetime.now().hour};
+    const CURRENT_MINUTE = {datetime.now().minute};
+    const IS_MARKET_HOURS = (CURRENT_HOUR < 15 || (CURRENT_HOUR === 15 && CURRENT_MINUTE < 10));
+
+    var CURRENT_JOURNAL_MODE = 'default';
+
+    function setJournalMode(mode) {{
+      CURRENT_JOURNAL_MODE = mode;
+      var btnDefault = document.getElementById('btn-mode-default');
+      var btnWhatIf = document.getElementById('btn-mode-whatif');
+      var panel = document.getElementById('whatif-controls-panel');
+      var btnReset = document.getElementById('btn-reset-rules');
+
+      if (mode === 'default') {{
+        if (btnDefault) {{ btnDefault.style.background = '#1b2438'; btnDefault.style.color = '#00ff9d'; }}
+        if (btnWhatIf) {{ btnWhatIf.style.background = 'transparent'; btnWhatIf.style.color = 'var(--muted)'; }}
+        if (panel) panel.style.display = 'none';
+        if (btnReset) btnReset.style.display = 'none';
+        renderDefaultAuditLog();
+      }} else {{
+        if (btnDefault) {{ btnDefault.style.background = 'transparent'; btnDefault.style.color = 'var(--muted)'; }}
+        if (btnWhatIf) {{ btnWhatIf.style.background = '#1b2438'; btnWhatIf.style.color = 'var(--blue)'; }}
+        if (panel) panel.style.display = 'block';
+        if (btnReset) btnReset.style.display = 'inline-block';
+        recomputeWhatIfSimulator();
+      }}
+    }}
+
+    function resetSimulatorToDefault() {{
+      var r1 = document.getElementById('sim-rule-open-prev'); if (r1) r1.checked = true;
+      var r2 = document.getElementById('sim-rule-extreme-gap'); if (r2) r2.checked = true;
+      var r3 = document.getElementById('sim-rule-erratic'); if (r3) r3.checked = true;
+      recomputeWhatIfSimulator();
+    }}
+
+    function onFilterExecutedToggled(checked) {{
+      if (CURRENT_JOURNAL_MODE === 'default') {{
+        renderDefaultAuditLog();
+      }} else {{
+        recomputeWhatIfSimulator();
+      }}
+    }}
+
+    function filterJournalRows(onlyExec) {{
+      onFilterExecutedToggled(onlyExec);
+    }}
+
+    var _equityChartInstance = null;
+    function initEquityChart() {{
+      var ctx = document.getElementById('equityCurveChart');
+      if (!ctx) return;
+      if (_equityChartInstance) return;
+      var labels = {curve_labels};
+      var dataNormal = {curve_normal};
+      var data1to1 = {curve_1to1};
+
+      _equityChartInstance = new Chart(ctx, {{
+        type: 'line',
+        data: {{
+          labels: labels,
+          datasets: [
+            {{
+              label: 'Normal P&L (3:10 PM Exit)',
+              data: dataNormal,
+              borderColor: '#3d9bff',
+              backgroundColor: 'rgba(61, 155, 255, 0.08)',
+              borderWidth: 2.2,
+              pointRadius: 4,
+              pointBackgroundColor: '#3d9bff',
+              tension: 0.25,
+              fill: true
+            }},
+            {{
+              label: '1:1 Target Exit P&L',
+              data: data1to1,
+              borderColor: '#00c47a',
+              backgroundColor: 'rgba(0, 196, 122, 0.05)',
+              borderWidth: 2.2,
+              borderDash: [5, 4],
+              pointRadius: 4,
+              pointBackgroundColor: '#00c47a',
+              tension: 0.25,
+              fill: true
+            }}
+          ]
+        }},
+        options: {{
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{
+              mode: 'index',
+              intersect: false,
+              callbacks: {{
+                label: function(c) {{
+                  return c.dataset.label + ': Rs.' + c.parsed.y.toLocaleString('en-IN');
+                }}
+              }}
+            }}
+          }},
+          scales: {{
+            x: {{
+              grid: {{ color: 'rgba(255, 255, 255, 0.05)' }},
+              ticks: {{ color: '#8892b0', font: {{ size: 10 }} }}
+            }},
+            y: {{
+              grid: {{ color: 'rgba(255, 255, 255, 0.05)' }},
+              ticks: {{
+                color: '#8892b0',
+                font: {{ size: 10 }},
+                callback: function(v) {{ return 'Rs.' + v; }}
+              }}
+            }}
+          }}
+        }}
+      }});
+    }}
+
+    function renderDefaultAuditLog() {{
+      var onlyExec = document.getElementById('journal-exec-filter') ? document.getElementById('journal-exec-filter').checked : true;
+      var trigTrades = [];
+      var wins = [];
+      var losses = [];
+      var totalMaxProfit = 0;
+      var dayMap = {{}};
+
+      HISTORIC_JOURNAL_DATA.forEach(function(t) {{
+        var d = t.date;
+        if (!dayMap[d]) {{
+          dayMap[d] = {{ total: 0, trig: 0, pnl: 0, pnl_1to1: 0, margin: 0 }};
+        }}
+        dayMap[d].total++;
+
+        var row = document.getElementById('trade-row-' + t.date + '-' + t.symbol);
+        var isLive = (t.date === TODAY_DATE_STR) && IS_MARKET_HOURS;
+
+        if (t.triggered) {{
+          dayMap[d].trig++;
+          dayMap[d].pnl += (t.pnl || 0.0);
+          dayMap[d].pnl_1to1 += (t.pnl_1to1 || 0.0);
+          dayMap[d].margin += (t.margin_used || 0.0);
+          trigTrades.push(t);
+          if (t.pnl > 0) wins.push(t);
+          else if (t.pnl < 0) losses.push(t);
+          totalMaxProfit += (t.max_profit_rupees || 0.0);
+
+          if (row) {{
+            row.className = 'journal-row-exec';
+            row.style.display = '';
+            var statusHtml = '';
+            var detailsHtml = '';
+            if (t.exit_reason === 'SL Hit') {{
+              statusHtml = '<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>';
+              detailsHtml = 'Trigger: <b>' + (t.trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.qty || 0) + '</b> @ &#8377;' + (t.entry_price || 0).toLocaleString('en-IN') + ' &rarr; Exit: &#8377;' + (t.exit_price || 0).toLocaleString('en-IN') + ' (' + (t.exit_time || '-') + ')';
+            }} else if (isLive) {{
+              statusHtml = '<span style="color:var(--blue);font-weight:700">&#128994; In Trade</span>';
+              detailsHtml = 'Trigger: <b>' + (t.trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.qty || 0) + '</b> @ &#8377;' + (t.entry_price || 0).toLocaleString('en-IN') + ' &rarr; LTP: &#8377;' + (t.exit_price || 0).toLocaleString('en-IN') + ' (Live)';
+            }} else {{
+              statusHtml = '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>';
+              detailsHtml = 'Trigger: <b>' + (t.trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.qty || 0) + '</b> @ &#8377;' + (t.entry_price || 0).toLocaleString('en-IN') + ' &rarr; Exit: &#8377;' + (t.exit_price || 0).toLocaleString('en-IN') + ' (' + (t.exit_time || '-') + ')';
+            }}
+
+            var pnlSign = t.pnl >= 0 ? '+' : '';
+            var pnlCls = t.pnl >= 0 ? 'pos' : 'neg';
+            var pnlCellHtml = '<span class="pc ' + pnlCls + '">' + pnlSign + '&#8377;' + (t.pnl || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + ' (' + pnlSign + (t.pnl_pct || 0).toFixed(2) + '%)</span>';
+
+            var sign1to1 = (t.pnl_1to1 || 0) >= 0 ? '+' : '';
+            var cls1to1 = (t.pnl_1to1 || 0) >= 0 ? 'pos' : 'neg';
+            var hitNote = '';
+            if (t.target_1to1_hit) hitNote = '<span style="font-size:9.5px;color:var(--green)">&#10004; Hit @ ' + (t.target_1to1_time || '-') + '</span>';
+            else if (t.exit_reason === 'SL Hit') hitNote = '<span style="font-size:9.5px;color:var(--red)">&#10006; Stopped Out</span>';
+            else if (isLive) hitNote = '<span style="font-size:9.5px;color:var(--blue)">&#128994; In Trade</span>';
+            else hitNote = '<span style="font-size:9.5px;color:var(--yel)">&#9200; 3:10 PM Squareoff</span>';
+
+            var pnl1to1Html = '<span class="pc ' + cls1to1 + '">' + sign1to1 + '&#8377;' + (t.pnl_1to1 || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + ' (' + sign1to1 + (t.pnl_1to1_pct || 0).toFixed(2) + '%)</span><br>' + hitNote;
+            var riskHtml = '<span style="color:#ff7799">&#8377;' + (t.risk_rupees || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '<br><span style="font-size:9.5px;color:var(--muted)">(' + (t.risk_pct || 0).toFixed(1) + '% risk)</span></span>';
+            var maxProfHtml = '<span style="color:var(--green);font-weight:700">+&#8377;' + (t.max_profit_rupees || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '<br><span style="font-size:9.5px;color:var(--green)">(' + (t.max_profit_pct || 0).toFixed(1) + '% peak)</span></span>';
+
+            var elStatus = row.querySelector('.cell-status'); if (elStatus) elStatus.innerHTML = statusHtml;
+            var elDetails = row.querySelector('.cell-details'); if (elDetails) elDetails.innerHTML = detailsHtml;
+            var elRisk = row.querySelector('.cell-risk'); if (elRisk) elRisk.innerHTML = riskHtml;
+            var elMaxProf = row.querySelector('.cell-maxprof'); if (elMaxProf) elMaxProf.innerHTML = maxProfHtml;
+            var el1to1 = row.querySelector('.cell-1to1'); if (el1to1) el1to1.innerHTML = pnl1to1Html;
+            var elNorm = row.querySelector('.cell-norm'); if (elNorm) elNorm.innerHTML = pnlCellHtml;
+          }}
+        }} else {{
+          if (row) {{
+            row.className = 'journal-row-unexec';
+            row.style.display = onlyExec ? 'none' : '';
+            var statusHtml = '';
+            var detailsHtml = '';
+
+            if (t.gap_filtered) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>';
+              detailsHtml = '<span style="color:var(--muted)">Disqualified by opening gap alignment</span>';
+            }} else if (t.erratic_filtered) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>';
+              detailsHtml = '<span style="color:var(--muted)">1st 5-min candle range &gt; 2.0%</span>';
+            }} else {{
+              statusHtml = '<span class="neu">&#9203; Not Triggered</span>';
+              detailsHtml = '<span style="color:var(--muted)">Price never broke 1st 5-min breakout level</span>';
+            }}
+
+            var elStatus = row.querySelector('.cell-status'); if (elStatus) elStatus.innerHTML = statusHtml;
+            var elDetails = row.querySelector('.cell-details'); if (elDetails) elDetails.innerHTML = detailsHtml;
+            var elRisk = row.querySelector('.cell-risk'); if (elRisk) elRisk.innerHTML = '-';
+            var elMaxProf = row.querySelector('.cell-maxprof'); if (elMaxProf) elMaxProf.innerHTML = '-';
+            var el1to1 = row.querySelector('.cell-1to1'); if (el1to1) el1to1.innerHTML = '<span class="neu">&#8377;0.00</span>';
+            var elNorm = row.querySelector('.cell-norm'); if (elNorm) elNorm.innerHTML = '<span class="neu">&#8377;0.00</span>';
+          }}
+        }}
+      }});
+
+      // Update Day Headers
+      Object.keys(dayMap).forEach(function(d) {{
+        var dm = dayMap[d];
+        var h1to1 = document.getElementById('day-header-1to1-' + d);
+        var hNorm = document.getElementById('day-header-norm-' + d);
+        var hTitle = document.getElementById('day-header-title-' + d);
+
+        if (hTitle) {{
+          hTitle.innerHTML = '&#128197; Trading Session: <span style="color:var(--blue)">' + d + '</span> (' + dm.trig + ' / ' + dm.total + ' Executed)';
+        }}
+        if (h1to1) {{
+          var s1 = dm.pnl_1to1 >= 0 ? '+' : '';
+          var c1 = dm.pnl_1to1 >= 0 ? 'var(--green)' : (dm.pnl_1to1 < 0 ? 'var(--red)' : 'var(--muted)');
+          h1to1.innerHTML = '1:1 Target Net P&amp;L: <b style="color:' + c1 + ';font-size:13px">' + s1 + '&#8377;' + dm.pnl_1to1.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b>';
+        }}
+        if (hNorm) {{
+          var sn = dm.pnl >= 0 ? '+' : '';
+          var cn = dm.pnl >= 0 ? 'var(--green)' : (dm.pnl < 0 ? 'var(--red)' : 'var(--muted)');
+          var roi = dm.margin > 0 ? (dm.pnl / dm.margin * 100).toFixed(2) : '0.00';
+          hNorm.innerHTML = 'Normal Net P&amp;L (3:10 PM): <b style="color:' + cn + ';font-size:13px">' + sn + '&#8377;' + dm.pnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b> (' + sn + roi + '% 5X ROI)';
+        }}
+      }});
+
+      // Global summary KPIs
+      var totalTriggered = trigTrades.length;
+      var totalNormalPnl = trigTrades.reduce(function(acc, x) {{ return acc + (x.pnl || 0.0); }}, 0.0);
+      var total1to1Pnl = trigTrades.reduce(function(acc, x) {{ return acc + (x.pnl_1to1 || 0.0); }}, 0.0);
+      var winRate = totalTriggered > 0 ? (wins.length / totalTriggered * 100).toFixed(1) : '0.0';
+      var totalWinProfit = wins.reduce(function(acc, x) {{ return acc + (x.pnl || 0.0); }}, 0.0);
+      var totalLossProfit = Math.abs(losses.reduce(function(acc, x) {{ return acc + (x.pnl || 0.0); }}, 0.0));
+      var profitFactor = totalLossProfit > 0 ? (totalWinProfit / totalLossProfit).toFixed(2) : (totalWinProfit > 0 ? totalWinProfit.toFixed(2) : '0.00');
+
+      var elNormVal = document.getElementById('kpi-normal-pnl-val');
+      var elNormSub = document.getElementById('kpi-normal-trades-sub');
+      if (elNormVal) {{
+        var snorm = totalNormalPnl >= 0 ? '+' : '';
+        elNormVal.style.color = totalNormalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        elNormVal.innerHTML = snorm + '&#8377;' + totalNormalPnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      }}
+      if (elNormSub) {{
+        elNormSub.innerHTML = 'Total Triggered Trades: <b>' + totalTriggered + '</b>';
+      }}
+
+      var el1to1Val = document.getElementById('kpi-1to1-pnl-val');
+      if (el1to1Val) {{
+        var s1to1 = total1to1Pnl >= 0 ? '+' : '';
+        el1to1Val.style.color = total1to1Pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        el1to1Val.innerHTML = s1to1 + '&#8377;' + total1to1Pnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      }}
+
+      var elWrVal = document.getElementById('kpi-winrate-val');
+      var elWrSub = document.getElementById('kpi-wins-losses-sub');
+      if (elWrVal) elWrVal.innerHTML = winRate + '%';
+      if (elWrSub) elWrSub.innerHTML = '<span style="color:var(--green)">' + wins.length + ' Wins</span> &middot; <span style="color:var(--red)">' + losses.length + ' Losses</span>';
+
+      var elMaxProf = document.getElementById('kpi-maxprofit-val');
+      var elPfSub = document.getElementById('kpi-profitfactor-sub');
+      if (elMaxProf) elMaxProf.innerHTML = '+&#8377;' + totalMaxProfit.toLocaleString('en-IN', {{maximumFractionDigits: 0}});
+      if (elPfSub) elPfSub.innerHTML = 'Profit Factor: <b>' + profitFactor + '</b>';
+
+      var simBanner = document.getElementById('sim-status-summary');
+      if (simBanner) {{
+        var pnlSignStr = totalNormalPnl >= 0 ? '+' : '';
+        simBanner.innerHTML = '&#9679; <b>Default Strategy Active</b> &middot; ' + totalTriggered + ' Executed &middot; Net P&amp;L: <b>' + pnlSignStr + '&#8377;' + totalNormalPnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b>';
+      }}
+
+      // Update Equity Curve Chart
+      if (_equityChartInstance) {{
+        var ascDates = Object.keys(dayMap).sort();
+        var cumNorm = 0;
+        var cum11 = 0;
+        var newNormData = [0.0];
+        var new11Data = [0.0];
+        ascDates.forEach(function(dt) {{
+          cumNorm += dayMap[dt].pnl;
+          cum11 += dayMap[dt].pnl_1to1;
+          newNormData.push(Math.round(cumNorm * 10) / 10);
+          new11Data.push(Math.round(cum11 * 10) / 10);
+        }});
+        _equityChartInstance.data.datasets[0].data = newNormData;
+        _equityChartInstance.data.datasets[1].data = new11Data;
+        _equityChartInstance.update();
+      }}
+    }}
+
+    function recomputeWhatIfSimulator() {{
+      var ruleOpenPrev = document.getElementById('sim-rule-open-prev') ? document.getElementById('sim-rule-open-prev').checked : true;
+      var ruleExtremeGap = document.getElementById('sim-rule-extreme-gap') ? document.getElementById('sim-rule-extreme-gap').checked : true;
+      var ruleErratic = document.getElementById('sim-rule-erratic') ? document.getElementById('sim-rule-erratic').checked : true;
+      var onlyExec = document.getElementById('journal-exec-filter') ? document.getElementById('journal-exec-filter').checked : true;
+
+      var trigTrades = [];
+      var wins = [];
+      var losses = [];
+      var totalMaxProfit = 0;
+
+      var dayMap = {{}};
+
+      HISTORIC_JOURNAL_DATA.forEach(function(t) {{
+        var d = t.date;
+        if (!dayMap[d]) {{
+          dayMap[d] = {{ total: 0, trig: 0, pnl: 0, pnl_1to1: 0, margin: 0 }};
+        }}
+        dayMap[d].total++;
+
+        var failOpen = ruleOpenPrev && (t.filter_open_prev_failed === true);
+        var failGap = ruleExtremeGap && (t.filter_extreme_gap_failed === true);
+        var failErratic = ruleErratic && (t.filter_erratic_range_failed === true);
+        var isFiltered = failOpen || failGap || failErratic;
+
+        var row = document.getElementById('trade-row-' + t.date + '-' + t.symbol);
+        var isLive = (t.date === TODAY_DATE_STR) && IS_MARKET_HOURS;
+
+        if (!isFiltered && t.sim_triggered) {{
+          dayMap[d].trig++;
+          dayMap[d].pnl += (t.sim_pnl || 0.0);
+          dayMap[d].pnl_1to1 += (t.sim_pnl_1to1 || 0.0);
+          dayMap[d].margin += (t.sim_margin_used || 0.0);
+          trigTrades.push(t);
+          if (t.sim_pnl > 0) wins.push(t);
+          else if (t.sim_pnl < 0) losses.push(t);
+          totalMaxProfit += (t.sim_max_profit_rupees || 0.0);
+
+          if (row) {{
+            row.className = 'journal-row-exec';
+            row.style.display = '';
+            var statusHtml = '';
+            var detailsHtml = '';
+            if (t.sim_exit_reason === 'SL Hit') {{
+              statusHtml = '<span style="color:var(--red);font-weight:700">&#128721; SL Hit</span>';
+              detailsHtml = 'Trigger: <b>' + (t.sim_trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.sim_qty || 0) + '</b> @ &#8377;' + (t.sim_entry_price || 0).toLocaleString('en-IN') + ' &rarr; Exit: &#8377;' + (t.sim_exit_price || 0).toLocaleString('en-IN') + ' (' + (t.sim_exit_time || '-') + ')';
+            }} else if (isLive) {{
+              statusHtml = '<span style="color:var(--blue);font-weight:700">&#128994; In Trade</span>';
+              detailsHtml = 'Trigger: <b>' + (t.sim_trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.sim_qty || 0) + '</b> @ &#8377;' + (t.sim_entry_price || 0).toLocaleString('en-IN') + ' &rarr; LTP: &#8377;' + (t.sim_exit_price || 0).toLocaleString('en-IN') + ' (Live)';
+            }} else {{
+              statusHtml = '<span style="color:var(--green);font-weight:700">&#9200; 3:10 PM Squareoff</span>';
+              detailsHtml = 'Trigger: <b>' + (t.sim_trigger_time || '-') + '</b> &middot; Qty: <b>' + (t.sim_qty || 0) + '</b> @ &#8377;' + (t.sim_entry_price || 0).toLocaleString('en-IN') + ' &rarr; Exit: &#8377;' + (t.sim_exit_price || 0).toLocaleString('en-IN') + ' (' + (t.sim_exit_time || '-') + ')';
+            }}
+
+            var pnlSign = t.sim_pnl >= 0 ? '+' : '';
+            var pnlCls = t.sim_pnl >= 0 ? 'pos' : 'neg';
+            var pnlCellHtml = '<span class="pc ' + pnlCls + '">' + pnlSign + '&#8377;' + (t.sim_pnl || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + ' (' + pnlSign + (t.sim_pnl_pct || 0).toFixed(2) + '%)</span>';
+
+            var sign1to1 = (t.sim_pnl_1to1 || 0) >= 0 ? '+' : '';
+            var cls1to1 = (t.sim_pnl_1to1 || 0) >= 0 ? 'pos' : 'neg';
+            var hitNote = '';
+            if (t.sim_target_1to1_hit) hitNote = '<span style="font-size:9.5px;color:var(--green)">&#10004; Hit @ ' + (t.sim_target_1to1_time || '-') + '</span>';
+            else if (t.sim_exit_reason === 'SL Hit') hitNote = '<span style="font-size:9.5px;color:var(--red)">&#10006; Stopped Out</span>';
+            else if (isLive) hitNote = '<span style="font-size:9.5px;color:var(--blue)">&#128994; In Trade</span>';
+            else hitNote = '<span style="font-size:9.5px;color:var(--yel)">&#9200; 3:10 PM Squareoff</span>';
+
+            var pnl1to1Html = '<span class="pc ' + cls1to1 + '">' + sign1to1 + '&#8377;' + (t.sim_pnl_1to1 || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + ' (' + sign1to1 + (t.sim_pnl_1to1_pct || 0).toFixed(2) + '%)</span><br>' + hitNote;
+            var riskHtml = '<span style="color:#ff7799">&#8377;' + (t.sim_risk_rupees || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '<br><span style="font-size:9.5px;color:var(--muted)">(' + (t.sim_risk_pct || 0).toFixed(1) + '% risk)</span></span>';
+            var maxProfHtml = '<span style="color:var(--green);font-weight:700">+&#8377;' + (t.sim_max_profit_rupees || 0).toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '<br><span style="font-size:9.5px;color:var(--green)">(' + (t.sim_max_profit_pct || 0).toFixed(1) + '% peak)</span></span>';
+
+            var elStatus = row.querySelector('.cell-status'); if (elStatus) elStatus.innerHTML = statusHtml;
+            var elDetails = row.querySelector('.cell-details'); if (elDetails) elDetails.innerHTML = detailsHtml;
+            var elRisk = row.querySelector('.cell-risk'); if (elRisk) elRisk.innerHTML = riskHtml;
+            var elMaxProf = row.querySelector('.cell-maxprof'); if (elMaxProf) elMaxProf.innerHTML = maxProfHtml;
+            var el1to1 = row.querySelector('.cell-1to1'); if (el1to1) el1to1.innerHTML = pnl1to1Html;
+            var elNorm = row.querySelector('.cell-norm'); if (elNorm) elNorm.innerHTML = pnlCellHtml;
+          }}
+        }} else {{
+          if (row) {{
+            row.className = 'journal-row-unexec';
+            row.style.display = onlyExec ? 'none' : '';
+            var statusHtml = '';
+            var detailsHtml = '';
+
+            if (failOpen) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Open Rule)</span>';
+              var gapVal = (t.gap_pct || 0);
+              detailsHtml = '<span style="color:var(--muted)">Opened ' + (t.side === 'BUY' ? 'BELOW' : 'ABOVE') + ' Prev Close (' + (gapVal >= 0 ? '+' : '') + gapVal.toFixed(2) + '%)</span>';
+            }} else if (failGap) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(255,119,153,0.15);color:var(--red)">&#9888; Skipped (Gap Rule)</span>';
+              var gapVal2 = (t.gap_pct || 0);
+              detailsHtml = '<span style="color:var(--muted)">Opening gap (' + (gapVal2 >= 0 ? '+' : '') + gapVal2.toFixed(2) + '%) exceeded 2.5%</span>';
+            }} else if (failErratic) {{
+              statusHtml = '<span class="pill neg" style="background:rgba(245,200,66,0.15);color:var(--yel)">&#9888; Skipped (Erratic 2%)</span>';
+              var rangeVal = (t.bar0_range_pct || 0);
+              detailsHtml = '<span style="color:var(--muted)">1st 5-min candle range ' + rangeVal.toFixed(2) + '% &gt; 2.0%</span>';
+            }} else {{
+              statusHtml = '<span class="neu">&#9203; Not Triggered</span>';
+              detailsHtml = '<span style="color:var(--muted)">Price never broke 1st 5-min breakout level</span>';
+            }}
+
+            var elStatus = row.querySelector('.cell-status'); if (elStatus) elStatus.innerHTML = statusHtml;
+            var elDetails = row.querySelector('.cell-details'); if (elDetails) elDetails.innerHTML = detailsHtml;
+            var elRisk = row.querySelector('.cell-risk'); if (elRisk) elRisk.innerHTML = '-';
+            var elMaxProf = row.querySelector('.cell-maxprof'); if (elMaxProf) elMaxProf.innerHTML = '-';
+            var el1to1 = row.querySelector('.cell-1to1'); if (el1to1) el1to1.innerHTML = '<span class="neu">&#8377;0.00</span>';
+            var elNorm = row.querySelector('.cell-norm'); if (elNorm) elNorm.innerHTML = '<span class="neu">&#8377;0.00</span>';
+          }}
+        }}
+      }});
+
+      // Update Day Headers
+      Object.keys(dayMap).forEach(function(d) {{
+        var dm = dayMap[d];
+        var h1to1 = document.getElementById('day-header-1to1-' + d);
+        var hNorm = document.getElementById('day-header-norm-' + d);
+        var hTitle = document.getElementById('day-header-title-' + d);
+
+        if (hTitle) {{
+          hTitle.innerHTML = '&#128197; Trading Session: <span style="color:var(--blue)">' + d + '</span> (' + dm.trig + ' / ' + dm.total + ' Executed)';
+        }}
+        if (h1to1) {{
+          var s1 = dm.pnl_1to1 >= 0 ? '+' : '';
+          var c1 = dm.pnl_1to1 >= 0 ? 'var(--green)' : (dm.pnl_1to1 < 0 ? 'var(--red)' : 'var(--muted)');
+          h1to1.innerHTML = '1:1 Target Net P&amp;L: <b style="color:' + c1 + ';font-size:13px">' + s1 + '&#8377;' + dm.pnl_1to1.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b>';
+        }}
+        if (hNorm) {{
+          var sn = dm.pnl >= 0 ? '+' : '';
+          var cn = dm.pnl >= 0 ? 'var(--green)' : (dm.pnl < 0 ? 'var(--red)' : 'var(--muted)');
+          var roi = dm.margin > 0 ? (dm.pnl / dm.margin * 100).toFixed(2) : '0.00';
+          hNorm.innerHTML = 'Normal Net P&amp;L (3:10 PM): <b style="color:' + cn + ';font-size:13px">' + sn + '&#8377;' + dm.pnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b> (' + sn + roi + '% 5X ROI)';
+        }}
+      }});
+
+      // Global summary KPIs
+      var totalTriggered = trigTrades.length;
+      var totalNormalPnl = trigTrades.reduce(function(acc, x) {{ return acc + (x.sim_pnl || 0.0); }}, 0.0);
+      var total1to1Pnl = trigTrades.reduce(function(acc, x) {{ return acc + (x.sim_pnl_1to1 || 0.0); }}, 0.0);
+      var winRate = totalTriggered > 0 ? (wins.length / totalTriggered * 100).toFixed(1) : '0.0';
+      var totalWinProfit = wins.reduce(function(acc, x) {{ return acc + (x.sim_pnl || 0.0); }}, 0.0);
+      var totalLossProfit = Math.abs(losses.reduce(function(acc, x) {{ return acc + (x.sim_pnl || 0.0); }}, 0.0));
+      var profitFactor = totalLossProfit > 0 ? (totalWinProfit / totalLossProfit).toFixed(2) : (totalWinProfit > 0 ? totalWinProfit.toFixed(2) : '0.00');
+
+      var elNormVal = document.getElementById('kpi-normal-pnl-val');
+      var elNormSub = document.getElementById('kpi-normal-trades-sub');
+      if (elNormVal) {{
+        var snorm = totalNormalPnl >= 0 ? '+' : '';
+        elNormVal.style.color = totalNormalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        elNormVal.innerHTML = snorm + '&#8377;' + totalNormalPnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      }}
+      if (elNormSub) {{
+        elNormSub.innerHTML = 'Total Triggered Trades: <b>' + totalTriggered + '</b>';
+      }}
+
+      var el1to1Val = document.getElementById('kpi-1to1-pnl-val');
+      if (el1to1Val) {{
+        var s1to1 = total1to1Pnl >= 0 ? '+' : '';
+        el1to1Val.style.color = total1to1Pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        el1to1Val.innerHTML = s1to1 + '&#8377;' + total1to1Pnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      }}
+
+      var elWrVal = document.getElementById('kpi-winrate-val');
+      var elWrSub = document.getElementById('kpi-wins-losses-sub');
+      if (elWrVal) elWrVal.innerHTML = winRate + '%';
+      if (elWrSub) elWrSub.innerHTML = '<span style="color:var(--green)">' + wins.length + ' Wins</span> &middot; <span style="color:var(--red)">' + losses.length + ' Losses</span>';
+
+      var elMaxProf = document.getElementById('kpi-maxprofit-val');
+      var elPfSub = document.getElementById('kpi-profitfactor-sub');
+      if (elMaxProf) elMaxProf.innerHTML = '+&#8377;' + totalMaxProfit.toLocaleString('en-IN', {{maximumFractionDigits: 0}});
+      if (elPfSub) elPfSub.innerHTML = 'Profit Factor: <b>' + profitFactor + '</b>';
+
+      var simBanner = document.getElementById('sim-status-summary');
+      if (simBanner) {{
+        var activeRulesList = [];
+        if (ruleOpenPrev) activeRulesList.push('Rule 1');
+        if (ruleExtremeGap) activeRulesList.push('Rule 2');
+        if (ruleErratic) activeRulesList.push('Rule 3');
+        var rulesStr = activeRulesList.length === 3 ? 'Baseline (All Rules ON)' : (activeRulesList.length === 0 ? 'Raw ORB (No Rules)' : 'Active: ' + activeRulesList.join(', '));
+        var pnlSignStr = totalNormalPnl >= 0 ? '+' : '';
+        simBanner.innerHTML = rulesStr + ' &middot; <b>' + totalTriggered + ' Triggered</b> &middot; Net P&amp;L: <b>' + pnlSignStr + '&#8377;' + totalNormalPnl.toLocaleString('en-IN', {{minimumFractionDigits: 1, maximumFractionDigits: 1}}) + '</b>';
+      }}
+
+      // Update Equity Curve Chart
+      if (_equityChartInstance) {{
+        var ascDates = Object.keys(dayMap).sort();
+        var cumNorm = 0;
+        var cum11 = 0;
+        var newNormData = [0.0];
+        var new11Data = [0.0];
+        ascDates.forEach(function(dt) {{
+          cumNorm += dayMap[dt].pnl;
+          cum11 += dayMap[dt].pnl_1to1;
+          newNormData.push(Math.round(cumNorm * 10) / 10);
+          new11Data.push(Math.round(cum11 * 10) / 10);
+        }});
+        _equityChartInstance.data.datasets[0].data = newNormData;
+        _equityChartInstance.data.datasets[1].data = new11Data;
+        _equityChartInstance.update();
+      }}
+    }}
+
+    function fetchTradingViewDirect(symbols) {{
+      var tvTickers = symbols.map(function(s) {{
+        var clean = s.replace('.NS', '').replace('NSE:', '').replace(/-/g, '_').replace(/&/g, '_');
+        return 'NSE:' + clean;
+      }});
+      return fetch('https://scanner.tradingview.com/india/scan', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ symbols: {{ tickers: tvTickers }}, columns: ['close', 'high', 'low'] }}),
+        signal: AbortSignal.timeout(6000)
+      }})
+      .then(function(res) {{
+        if (!res.ok) throw new Error('TradingView error ' + res.status);
+        return res.json();
+      }})
+      .then(function(data) {{
+        var prices = {{}};
+        if (data && data.data) {{
+          data.data.forEach(function(row) {{
+            var raw = (row.s || '').replace('NSE:', '');
+            symbols.forEach(function(orig) {{
+              var norm = orig.replace('.NS', '').replace('NSE:', '').replace(/-/g, '_').replace(/&/g, '_');
+              if (norm === raw && row.d && row.d[0] != null) {{
+                prices[orig.replace('.NS', '')] = Math.round(Number(row.d[0]) * 100) / 100;
+              }}
+            }});
+          }});
+        }}
+        return prices;
+      }});
+    }}
+
+    function refreshJournalLivePrices() {{
+      var btn = document.getElementById('btn-journal-refresh');
+      var lbl = document.getElementById('journal-refresh-lbl');
+      var st = document.getElementById('journal-live-status');
+
+      if (btn) btn.disabled = true;
+      if (lbl) lbl.textContent = 'Updating...';
+      if (st) st.innerHTML = '<span style="color:var(--blue)">&#9203; Contacting feed...</span>';
+
+      var todayTrades = HISTORIC_JOURNAL_DATA.filter(function(t) {{
+        return t.date === TODAY_DATE_STR;
+      }});
+
+      if (!todayTrades.length) {{
+        if (st) st.innerHTML = '<span style="color:var(--yel)">No trades for today (' + TODAY_DATE_STR + ')</span>';
+        if (btn) btn.disabled = false;
+        if (lbl) lbl.textContent = 'Refresh Live P&L';
+        return;
+      }}
+
+      var symList = todayTrades.map(function(t) {{ return t.symbol; }});
+      var querySymbols = symList.map(function(s) {{ return s + '.NS'; }}).join(',');
+      var localUrl = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(querySymbols);
+
+      fetch(localUrl, {{ signal: AbortSignal.timeout(2500) }})
+        .then(function(r) {{
+          if (!r.ok) throw new Error('Local server error ' + r.status);
+          return r.json();
+        }})
+        .catch(function() {{
+          return fetchTradingViewDirect(symList);
+        }})
+        .then(function(prices) {{
+          if (!prices || !Object.keys(prices).length) {{
+            throw new Error('No quotes returned');
+          }}
+
+          var nowTime = new Date().toLocaleTimeString('en-IN', {{ hour: '2-digit', minute: '2-digit', hour12: false }});
+          var updatedCount = 0;
+
+          todayTrades.forEach(function(t) {{
+            var ltp = prices[t.symbol];
+            if (!ltp || isNaN(ltp) || ltp <= 0) return;
+
+            // 1. Standard / Default Strategy update
+            if (t.triggered) {{
+              if (t.exit_reason !== 'SL Hit') {{
+                updatedCount++;
+                var isSlHit = (t.side === 'BUY' && ltp <= t.sl_price) || (t.side === 'SELL' && ltp >= t.sl_price);
+                if (isSlHit) {{
+                  t.exit_reason = 'SL Hit';
+                  t.exit_price = t.sl_price;
+                  t.exit_time = nowTime;
+                  var slPnl = t.side === 'BUY' ? (t.sl_price - t.entry_price) * t.qty : (t.entry_price - t.sl_price) * t.qty;
+                  t.pnl = Math.round(slPnl * 10) / 10;
+                  t.pnl_pct = t.margin_used > 0 ? Math.round((t.pnl / t.margin_used * 100) * 100) / 100 : 0;
+                  t.pnl_1to1 = t.pnl;
+                  t.pnl_1to1_pct = t.pnl_pct;
+                }} else {{
+                  t.exit_price = ltp;
+                  var curPnl = t.side === 'BUY' ? (ltp - t.entry_price) * t.qty : (t.entry_price - ltp) * t.qty;
+                  t.pnl = Math.round(curPnl * 10) / 10;
+                  t.pnl_pct = t.margin_used > 0 ? Math.round((curPnl / t.margin_used * 100) * 100) / 100 : 0;
+
+                  // 1:1 Target check
+                  if (!t.target_1to1_hit) {{
+                    var is1to1 = (t.side === 'BUY' && ltp >= t.target_1to1) || (t.side === 'SELL' && ltp <= t.target_1to1);
+                    if (is1to1) {{
+                      t.target_1to1_hit = true;
+                      t.target_1to1_time = nowTime;
+                      var p1 = t.side === 'BUY' ? (t.target_1to1 - t.entry_price) * t.qty : (t.entry_price - t.target_1to1) * t.qty;
+                      t.pnl_1to1 = Math.round(p1 * 10) / 10;
+                      t.pnl_1to1_pct = t.margin_used > 0 ? Math.round((t.pnl_1to1 / t.margin_used * 100) * 100) / 100 : 0;
+                    }} else {{
+                      t.pnl_1to1 = t.pnl;
+                      t.pnl_1to1_pct = t.pnl_pct;
+                    }}
+                  }}
+
+                  // Peak Profit
+                  if (curPnl > (t.max_profit_rupees || 0)) {{
+                    t.max_profit_rupees = Math.round(curPnl * 10) / 10;
+                    t.max_profit_pct = t.margin_used > 0 ? Math.round((curPnl / t.margin_used * 100) * 100) / 100 : 0;
+                  }}
+                }}
+              }}
+            }}
+
+            // 2. What-If Simulated fields update
+            if (t.sim_triggered) {{
+              if (t.sim_exit_reason !== 'SL Hit') {{
+                var isSimSlHit = (t.side === 'BUY' && ltp <= t.sim_sl_price) || (t.side === 'SELL' && ltp >= t.sim_sl_price);
+                if (isSimSlHit) {{
+                  t.sim_exit_reason = 'SL Hit';
+                  t.sim_exit_price = t.sim_sl_price;
+                  t.sim_exit_time = nowTime;
+                  var simSlPnl = t.side === 'BUY' ? (t.sim_sl_price - t.sim_entry_price) * t.sim_qty : (t.sim_entry_price - t.sim_sl_price) * t.sim_qty;
+                  t.sim_pnl = Math.round(simSlPnl * 10) / 10;
+                  t.sim_pnl_pct = t.sim_margin_used > 0 ? Math.round((t.sim_pnl / t.sim_margin_used * 100) * 100) / 100 : 0;
+                  t.sim_pnl_1to1 = t.sim_pnl;
+                  t.sim_pnl_1to1_pct = t.sim_pnl_pct;
+                }} else {{
+                  t.sim_exit_price = ltp;
+                  var curSimPnl = t.side === 'BUY' ? (ltp - t.sim_entry_price) * t.sim_qty : (t.sim_entry_price - ltp) * t.sim_qty;
+                  t.sim_pnl = Math.round(curSimPnl * 10) / 10;
+                  t.sim_pnl_pct = t.sim_margin_used > 0 ? Math.round((curSimPnl / t.sim_margin_used * 100) * 100) / 100 : 0;
+
+                  if (!t.sim_target_1to1_hit) {{
+                    var isSim1to1 = (t.side === 'BUY' && ltp >= t.sim_target_1to1) || (t.side === 'SELL' && ltp <= t.sim_target_1to1);
+                    if (isSim1to1) {{
+                      t.sim_target_1to1_hit = true;
+                      t.sim_target_1to1_time = nowTime;
+                      var sp1 = t.side === 'BUY' ? (t.sim_target_1to1 - t.sim_entry_price) * t.sim_qty : (t.sim_entry_price - t.sim_target_1to1) * t.sim_qty;
+                      t.sim_pnl_1to1 = Math.round(sp1 * 10) / 10;
+                      t.sim_pnl_1to1_pct = t.sim_margin_used > 0 ? Math.round((t.sim_pnl_1to1 / t.sim_margin_used * 100) * 100) / 100 : 0;
+                    }} else {{
+                      t.sim_pnl_1to1 = t.sim_pnl;
+                      t.sim_pnl_1to1_pct = t.sim_pnl_pct;
+                    }}
+                  }}
+
+                  if (curSimPnl > (t.sim_max_profit_rupees || 0)) {{
+                    t.sim_max_profit_rupees = Math.round(curSimPnl * 10) / 10;
+                    t.sim_max_profit_pct = t.sim_margin_used > 0 ? Math.round((curSimPnl / t.sim_margin_used * 100) * 100) / 100 : 0;
+                  }}
+                }}
+              }}
+            }}
+          }});
+
+          // Re-render Tab 4 according to active mode
+          if (CURRENT_JOURNAL_MODE === 'default') {{
+            renderDefaultAuditLog();
+          }} else {{
+            recomputeWhatIfSimulator();
+          }}
+
+          // Also keep Tab 2 in sync if present
+          if (typeof applyLivePrices === 'function') {{
+            var liveTradesRaw = document.getElementById('live-trades-data');
+            if (liveTradesRaw) {{
+              try {{
+                var liveTrades = JSON.parse(liveTradesRaw.textContent);
+                applyLivePrices(liveTrades, prices);
+              }} catch(err) {{}}
+            }}
+          }}
+
+          var stamp = new Date().toLocaleTimeString('en-IN');
+          if (st) st.innerHTML = '<span style="color:#00ff9d;font-weight:600">&#128994; Live LTP updated @ ' + stamp + '</span>';
+        }})
+        .catch(function(err) {{
+          if (st) st.innerHTML = '<span style="color:var(--red)">&#9888; Update failed: ' + (err.message || 'Market feed unavailable') + '</span>';
+        }})
+        .finally(function() {{
+          if (btn) btn.disabled = false;
+          if (lbl) lbl.textContent = 'Refresh Live P&L';
+        }});
+    }}
+
+    document.addEventListener('DOMContentLoaded', function() {{
+      initEquityChart();
+      renderDefaultAuditLog();
+    }});
+    </script>
+    """
+    return raw_html.replace("__JOURNAL_JSON_PLACEHOLDER__", json.dumps(journal))
+
 def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bhavcopy (Real OI)"):
     sections = (
         build_section("fl", "&#129001;", "Fresh Longs",    "Price &uarr; &nbsp; OI &uarr;", data["fresh_longs"],    "rg") +
@@ -1684,6 +3022,11 @@ def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bh
     trade_recs, executed_trades = build_recommendations(data, ref_date=ref_date)
     rules_panel = build_rules_panel()
     pnl_tab_content = build_pnl_tracker_tab(executed_trades, capital_per_trade=10000)
+
+    # Record today's trades to the database and build Tab 4
+    exec_session_date = next_trading_day(ref_date).strftime("%Y-%m-%d") if ref_date else datetime.now().strftime("%Y-%m-%d")
+    journal = record_trades_to_journal(executed_trades, exec_session_date)
+    journal_content = build_journal_tab(journal)
 
     # Generate Historic 1-Week Analysis Tab
     if session and ref_date:
@@ -1698,19 +3041,23 @@ def generate_html(data, out_path, session=None, ref_date=None, oi_source="NSE Bh
             .replace("__TRADE_RECOMMENDATIONS__", trade_recs)
             .replace("__RULES_PANEL__", rules_panel)
             .replace("__PNL_TAB_CONTENT__", pnl_tab_content)
-            .replace("__HISTORIC_CONTENT__", historic_content))
+            .replace("__HISTORIC_CONTENT__", historic_content)
+            .replace("__JOURNAL_CONTENT__", journal_content))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"[DONE] Dashboard -> {out_path}")
 
 # ─── ENTRY POINT ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    wait_for_bhavcopy = "--wait-for-bhavcopy" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+
     # Allow optional date argument: python fetch_oi_data.py 2026-11-04
-    if len(sys.argv) > 1:
+    if len(args) > 0:
         try:
-            analysis_date = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
+            analysis_date = datetime.strptime(args[0], "%Y-%m-%d").date()
         except ValueError:
-            print(f"[error] Invalid date format. Use YYYY-MM-DD. Got: {sys.argv[1]}")
+            print(f"[error] Invalid date format. Use YYYY-MM-DD. Got: {args[0]}")
             sys.exit(1)
     else:
         # Default: last completed trading day
@@ -1727,11 +3074,23 @@ if __name__ == "__main__":
             else:
                 analysis_date = today
 
-    rows, as_of = build_rows(analysis_date)
+    # Bhavcopy availability polling / retry logic
+    max_retries = 6 if wait_for_bhavcopy else 1
+    retry_delay_sec = 60
+    rows = None
+
+    for attempt in range(1, max_retries + 1):
+        rows, as_of = build_rows(analysis_date)
+        if rows:
+            break
+        if attempt < max_retries:
+            print(f"[*] Bhavcopy not yet published for {analysis_date}. Retrying in {retry_delay_sec}s (Attempt {attempt}/{max_retries})...")
+            import time
+            time.sleep(retry_delay_sec)
 
     if not rows:
-        print("[error] No data could be fetched. Check internet connection.")
-        sys.exit(1)
+        print(f"[info] Skipping dashboard generation for {analysis_date} (no NSE bhavcopy available — likely NSE holiday).")
+        sys.exit(0)
 
     data = classify(rows, as_of)
 
