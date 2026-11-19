@@ -755,6 +755,16 @@ function openTab(tabId, btn) {
     var cb = document.getElementById('journal-exec-filter');
     if (cb && typeof filterJournalRows === 'function') filterJournalRows(cb.checked);
   }
+  if (tabId === 'historic-tab') {
+    setTimeout(function() {
+      var v4 = document.getElementById('historic-view-4d');
+      if (v4 && v4.style.display === 'block') {
+        if (typeof initEquityChartMulti === 'function') initEquityChartMulti('4d');
+      } else {
+        if (typeof initEquityChartMulti === 'function') initEquityChartMulti('5d');
+      }
+    }, 60);
+  }
 }
 
 // ── LIVE P&L REFRESH ENGINE ──────────────────────────────────────────────────
@@ -782,7 +792,6 @@ function fetchTradingViewDirect(symbols) {
   });
   return fetch('https://scanner.tradingview.com/india/scan', {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ symbols: { tickers: tvTickers }, columns: ['close', 'high', 'low'] }),
     signal: AbortSignal.timeout(6000)
   })
@@ -844,7 +853,13 @@ function doLiveRefresh() {
     document.getElementById('live-err').textContent = '';
   })
   .catch(function(e){
-    setErr('&#9888; ' + (e.message || 'Cannot reach live prices'));
+    var msg = (e && e.message) ? e.message : '';
+    var isBlocked = /networkerror|failed to fetch|blocked|aborted|failed/i.test(msg);
+    if (isBlocked) {
+      setErr('&#9888; Live feed blocked by browser privacy/ad-blocker');
+    } else {
+      setErr('&#9888; ' + (msg || 'Cannot reach live prices'));
+    }
     setStatus('Static snapshot', false);
   });
 }
@@ -2001,14 +2016,30 @@ def render_historic_deck_html(hist_rows, start_date_str, end_date_str, valid_ses
 def build_historic_analysis(session, ref_date):
     """
     Renders Tab 3: Multi-Day Historic Trend & Setup with interactive horizon toggles
-    for both 1-Week (5-Day Trend) and 4-Day Historic Setup.
+    for both 1-Week (5-Day Trend) and 4-Day Historic Setup, complete with
+    Historical Trade Journals for both 5-Day and 4-Day strategies.
     """
     print("[*] Building Multi-Day Historic Trend Analysis (5-Day & 4-Day)...")
+    from multiday_journal import (
+        load_trade_journal_multiday,
+        audit_and_sync_multiday_journal,
+        render_multiday_journal_deck,
+        generate_multiday_journal_scripts
+    )
+
     h5_rows, s5_str, e5_str, sess5_cnt, ign5_cnt = get_historic_period_analysis(session, ref_date, num_sessions=5)
     deck_5d = render_historic_deck_html(h5_rows, s5_str, e5_str, sess5_cnt, ign5_cnt, horizon_title="1-Week (5-Day)")
+    j5 = load_trade_journal_multiday(5)
+    j5 = audit_and_sync_multiday_journal(j5, 5)
+    journal_deck_5d = render_multiday_journal_deck(j5, horizon_id="5d", horizon_title="1-Week (5-Day Trend)")
 
     h4_rows, s4_str, e4_str, sess4_cnt, ign4_cnt = get_historic_period_analysis(session, ref_date, num_sessions=4)
     deck_4d = render_historic_deck_html(h4_rows, s4_str, e4_str, sess4_cnt, ign4_cnt, horizon_title="4-Day")
+    j4 = load_trade_journal_multiday(4)
+    j4 = audit_and_sync_multiday_journal(j4, 4)
+    journal_deck_4d = render_multiday_journal_deck(j4, horizon_id="4d", horizon_title="4-Day Historic Setup")
+
+    scripts_multi = generate_multiday_journal_scripts(j4, j5)
 
     html = f"""
     <!-- HORIZON SUB-TAB SELECTOR -->
@@ -2032,12 +2063,16 @@ def build_historic_analysis(session, ref_date):
     <!-- 1-WEEK (5-DAY) VIEW -->
     <div id="historic-view-5d">
       {deck_5d}
+      {journal_deck_5d}
     </div>
 
     <!-- 4-DAY VIEW -->
     <div id="historic-view-4d" style="display:none">
       {deck_4d}
+      {journal_deck_4d}
     </div>
+
+    {scripts_multi}
 
     <script>
     function switchHistoricHorizon(h) {{
@@ -2050,11 +2085,13 @@ def build_historic_analysis(session, ref_date):
         if (v4) v4.style.display = 'block';
         if (b5) {{ b5.style.background = 'transparent'; b5.style.color = 'var(--muted)'; }}
         if (b4) {{ b4.style.background = '#1b2438'; b4.style.color = 'var(--blue)'; }}
+        setTimeout(function() {{ if (typeof initEquityChartMulti === 'function') initEquityChartMulti('4d'); }}, 50);
       }} else {{
         if (v5) v5.style.display = 'block';
         if (v4) v4.style.display = 'none';
         if (b5) {{ b5.style.background = '#1b2438'; b5.style.color = '#00ff9d'; }}
         if (b4) {{ b4.style.background = 'transparent'; b4.style.color = 'var(--muted)'; }}
+        setTimeout(function() {{ if (typeof initEquityChartMulti === 'function') initEquityChartMulti('5d'); }}, 50);
       }}
     }}
     </script>
@@ -3023,7 +3060,6 @@ def build_journal_tab(journal):
       }});
       return fetch('https://scanner.tradingview.com/india/scan', {{
         method: 'POST',
-        headers: {{ 'Content-Type': 'text/plain' }},
         body: JSON.stringify({{ symbols: {{ tickers: tvTickers }}, columns: ['close', 'high', 'low'] }}),
         signal: AbortSignal.timeout(6000)
       }})
@@ -3208,7 +3244,15 @@ def build_journal_tab(journal):
           if (st) st.innerHTML = '<span style="color:#00ff9d;font-weight:600">&#128994; Live LTP updated @ ' + stamp + '</span>';
         }})
         .catch(function(err) {{
-          if (st) st.innerHTML = '<span style="color:var(--red)">&#9888; Update failed: ' + (err.message || 'Market feed unavailable') + '</span>';
+          var msg = (err && err.message) ? err.message : '';
+          var isBlocked = /networkerror|failed to fetch|blocked|aborted|failed/i.test(msg);
+          if (st) {{
+            if (isBlocked) {{
+              st.innerHTML = '<span style="color:var(--yel)">&#9888; Live feed blocked by browser privacy/ad-blocker. (Disable shields for this site or run python live_server.py locally)</span>';
+            }} else {{
+              st.innerHTML = '<span style="color:var(--red)">&#9888; Update failed: ' + (msg || 'Market feed unavailable') + '</span>';
+            }}
+          }}
         }})
         .finally(function() {{
           if (btn) btn.disabled = false;
@@ -3219,6 +3263,10 @@ def build_journal_tab(journal):
     document.addEventListener('DOMContentLoaded', function() {{
       initEquityChart();
       renderDefaultAuditLog();
+      if (typeof initEquityChartMulti === 'function') {{
+        initEquityChartMulti('5d');
+        initEquityChartMulti('4d');
+      }}
     }});
     </script>
     """
