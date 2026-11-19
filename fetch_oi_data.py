@@ -1758,81 +1758,144 @@ def build_historic_analysis(session, ref_date):
     and ranks the top high-conviction multi-day BUYS and SELLS.
     """
     print("[*] Building 1-Week Historic Trend Analysis...")
-    days = prev_trading_days(ref_date, n=6) # 6 trading days gives 5 day-over-day changes
-    if len(days) < 2:
-        return "<div class='sec' style='padding:20px'>Not enough historical trading days found.</div>"
+    ref_dt = ref_date if isinstance(ref_date, (date, datetime)) else datetime.strptime(str(ref_date), "%Y-%m-%d").date()
+    ref_str = ref_dt.strftime("%Y-%m-%d")
 
-    # Load daily FO OI & EQ prices for each day
-    daily_ois = []
-    daily_prices = []
-    valid_dates = []
-
-    for d in days:
-        fo_df = download_fo_bhavcopy(session, d)
-        eq_df = download_eq_bhavcopy(session, d)
-        oi_m  = parse_fo_oi(fo_df)
-        p_m   = parse_eq_prices(eq_df)
-        if p_m:
-            daily_ois.append(oi_m)
-            daily_prices.append(p_m)
-            valid_dates.append(d)
-
-    if len(valid_dates) < 2:
-        return "<div class='sec' style='padding:20px'>Failed to load consecutive historical Bhavcopies.</div>"
-
-    latest_idx = 0
-    oldest_idx = len(valid_dates) - 1
-
-    latest_p = daily_prices[latest_idx]
-    oldest_p = daily_prices[oldest_idx]
-    latest_oi = daily_ois[latest_idx]
-    oldest_oi = daily_ois[oldest_idx]
-
-    start_date_str = valid_dates[oldest_idx].strftime("%d %b")
-    end_date_str   = valid_dates[latest_idx].strftime("%d %b %Y")
-
-    # Fetch Corporate Actions (Dividends, Splits, Bonus, Rights) across this 1-week window
-    ca_exclusions = fetch_corporate_action_exclusions(session, valid_dates[oldest_idx], valid_dates[latest_idx] + timedelta(days=1))
+    # Strategy 1: Fast & reliable load directly from SQLite daily_oi
+    db_file = os.path.join(OUT_DIR, "oi_trading.db")
+    hist_rows = []
+    start_date_str = ""
+    end_date_str = ""
+    valid_sessions_count = 0
     ignored_hist_count = 0
 
-    # Aggregate stock metrics across the week
-    sym_pool = set(latest_p.keys()) & set(latest_oi.keys())
-    hist_rows = []
+    if os.path.exists(db_file):
+        try:
+            import sqlite3
+            with sqlite3.connect(db_file) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT DISTINCT trade_date FROM daily_oi WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT 6", (ref_str,))
+                db_dates = sorted([r[0] for r in cur.fetchall()])
+                if len(db_dates) >= 2:
+                    oldest_date = db_dates[0]
+                    latest_date = db_dates[-1]
+                    valid_sessions_count = len(db_dates) - 1
+                    start_dt = datetime.strptime(oldest_date, "%Y-%m-%d").date()
+                    end_dt = datetime.strptime(latest_date, "%Y-%m-%d").date()
+                    start_date_str = start_dt.strftime("%d %b")
+                    end_date_str = end_dt.strftime("%d %b %Y")
 
-    for s in sym_pool:
-        # Ignore stocks with corporate action price adjustments during the week
-        if s in ca_exclusions:
-            ignored_hist_count += 1
-            continue
+                    ca_exclusions = fetch_corporate_action_exclusions(session, start_dt, end_dt + timedelta(days=1)) if session else set()
 
-        p_curr = latest_p[s]["close"]
-        p_prev = oldest_p.get(s, {}).get("close")
-        if not p_prev:
-            continue
+                    cur.execute("SELECT symbol, close, oi, deliv_pct FROM daily_oi WHERE trade_date = ?", (latest_date,))
+                    latest_p = {r[0]: {"close": r[1], "oi": r[2], "deliv_pct": r[3]} for r in cur.fetchall()}
 
-        oi_curr = latest_oi.get(s, 0)
-        oi_prev = oldest_oi.get(s, 0)
-        if oi_prev <= 0 or oi_curr <= 0:
-            continue
+                    cur.execute("SELECT symbol, close, oi FROM daily_oi WHERE trade_date = ?", (oldest_date,))
+                    oldest_p = {r[0]: {"close": r[1], "oi": r[2]} for r in cur.fetchall()}
 
-        week_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
-        week_oi_chg = oi_curr - oi_prev
-        week_oi_pct = round(week_oi_chg / oi_prev * 100, 2)
+                    placeholders = ",".join("?" * len(db_dates))
+                    cur.execute(f"SELECT symbol, AVG(deliv_pct) FROM daily_oi WHERE trade_date IN ({placeholders}) GROUP BY symbol", db_dates)
+                    avg_deliv_map = {r[0]: round(r[1], 1) if r[1] is not None else 30.0 for r in cur.fetchall()}
 
-        # Average delivery % across the week
-        deliv_vals = [daily_prices[i][s]["deliv_pct"] for i in range(len(valid_dates)) if s in daily_prices[i] and daily_prices[i][s].get("deliv_pct") is not None]
-        avg_deliv = round(sum(deliv_vals) / len(deliv_vals), 2) if deliv_vals else None
+                    for s, cur_data in latest_p.items():
+                        if s in ca_exclusions:
+                            ignored_hist_count += 1
+                            continue
+                        if s not in oldest_p:
+                            continue
+                        p_curr = cur_data["close"]
+                        p_prev = oldest_p[s]["close"]
+                        oi_curr = cur_data["oi"]
+                        oi_prev = oldest_p[s]["oi"]
+                        if p_prev <= 0 or p_curr <= 0 or oi_prev <= 0 or oi_curr <= 0:
+                            continue
 
-        hist_rows.append({
-            "symbol": s,
-            "curr_close": p_curr,
-            "prev_close": p_prev,
-            "week_price_chg": week_price_chg,
-            "curr_oi": oi_curr,
-            "week_oi_chg": week_oi_chg,
-            "week_oi_pct": week_oi_pct,
-            "avg_deliv": avg_deliv
-        })
+                        week_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
+                        week_oi_chg = oi_curr - oi_prev
+                        week_oi_pct = round(week_oi_chg / oi_prev * 100, 2)
+                        avg_deliv = avg_deliv_map.get(s, 30.0)
+
+                        hist_rows.append({
+                            "symbol": s,
+                            "curr_close": p_curr,
+                            "prev_close": p_prev,
+                            "week_price_chg": week_price_chg,
+                            "curr_oi": oi_curr,
+                            "week_oi_chg": week_oi_chg,
+                            "week_oi_pct": week_oi_pct,
+                            "avg_deliv": avg_deliv
+                        })
+        except Exception as e:
+            print(f"[warn] SQLite historic trend load failed, falling back to Bhavcopy: {e}")
+            hist_rows = []
+
+    # Strategy 2: Fallback to direct NSE Bhavcopy download if SQLite didn't yield enough data
+    if len(hist_rows) < 5:
+        days = prev_trading_days(ref_dt, n=6)
+        daily_ois = []
+        daily_prices = []
+        valid_dates = []
+
+        for d in days:
+            fo_df = download_fo_bhavcopy(session, d)
+            eq_df = download_eq_bhavcopy(session, d)
+            oi_m  = parse_fo_oi(fo_df)
+            p_m   = parse_eq_prices(eq_df)
+            # CRITICAL FIX: Only keep days where BOTH EQ prices AND FO OI are valid!
+            if p_m and oi_m:
+                daily_ois.append(oi_m)
+                daily_prices.append(p_m)
+                valid_dates.append(d)
+
+        if len(valid_dates) < 2:
+            return "<div class='sec' style='padding:20px'>Failed to load consecutive historical Bhavcopies.</div>"
+
+        latest_idx = 0
+        oldest_idx = len(valid_dates) - 1
+        valid_sessions_count = len(valid_dates) - 1
+
+        latest_p = daily_prices[latest_idx]
+        oldest_p = daily_prices[oldest_idx]
+        latest_oi = daily_ois[latest_idx]
+        oldest_oi = daily_ois[oldest_idx]
+
+        start_date_str = valid_dates[oldest_idx].strftime("%d %b")
+        end_date_str   = valid_dates[latest_idx].strftime("%d %b %Y")
+
+        ca_exclusions = fetch_corporate_action_exclusions(session, valid_dates[oldest_idx], valid_dates[latest_idx] + timedelta(days=1)) if session else set()
+        ignored_hist_count = 0
+        sym_pool = set(latest_p.keys()) & set(latest_oi.keys())
+        hist_rows = []
+
+        for s in sym_pool:
+            if s in ca_exclusions:
+                ignored_hist_count += 1
+                continue
+            p_curr = latest_p[s]["close"]
+            p_prev = oldest_p.get(s, {}).get("close")
+            if not p_prev:
+                continue
+            oi_curr = latest_oi.get(s, 0)
+            oi_prev = oldest_oi.get(s, 0)
+            if oi_prev <= 0 or oi_curr <= 0:
+                continue
+
+            week_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
+            week_oi_chg = oi_curr - oi_prev
+            week_oi_pct = round(week_oi_chg / oi_prev * 100, 2)
+            deliv_vals = [daily_prices[i][s]["deliv_pct"] for i in range(len(valid_dates)) if s in daily_prices[i] and daily_prices[i][s].get("deliv_pct") is not None]
+            avg_deliv = round(sum(deliv_vals) / len(deliv_vals), 2) if deliv_vals else 30.0
+
+            hist_rows.append({
+                "symbol": s,
+                "curr_close": p_curr,
+                "prev_close": p_prev,
+                "week_price_chg": week_price_chg,
+                "curr_oi": oi_curr,
+                "week_oi_chg": week_oi_chg,
+                "week_oi_pct": week_oi_pct,
+                "avg_deliv": avg_deliv
+            })
 
     # Filter & rank 1-Week Buys & Sells
     # 1-Week Buys: Consistent Price Up + OI Up (Fresh Long build-up) or Price Up + OI Down (sustained short squeeze)
@@ -1893,7 +1956,7 @@ def build_historic_analysis(session, ref_date):
       <div class="hist-stat">
         <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Analysis Window</span>
         <div class="val" style="color:var(--blue)">{start_date_str} &rarr; {end_date_str}</div>
-        <div class="sub">{len(valid_dates)-1} Completed Trading Sessions</div>
+        <div class="sub">{valid_sessions_count} Completed Trading Sessions</div>
       </div>
       <div class="hist-stat">
         <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Weekly Market Breadth</span>
