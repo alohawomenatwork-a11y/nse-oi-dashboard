@@ -501,19 +501,6 @@
       "deliv_pct": 34.34
     },
     {
-      "symbol": "PRESTIGE",
-      "last_close": 1691.5,
-      "open": 1684.2,
-      "high": 1693.5,
-      "low": 1657.4,
-      "close": 1657.4,
-      "price_chg": -2.02,
-      "oi": 5422050,
-      "oi_chg": -375750,
-      "oi_chg_pct": -6.48,
-      "deliv_pct": 47.67
-    },
-    {
       "symbol": "OFSS",
       "last_close": 9741.0,
       "open": 9741.0,
@@ -525,6 +512,19 @@
       "oi_chg": -58250,
       "oi_chg_pct": -6.48,
       "deliv_pct": 41.87
+    },
+    {
+      "symbol": "PRESTIGE",
+      "last_close": 1691.5,
+      "open": 1684.2,
+      "high": 1693.5,
+      "low": 1657.4,
+      "close": 1657.4,
+      "price_chg": -2.02,
+      "oi": 5422050,
+      "oi_chg": -375750,
+      "oi_chg_pct": -6.48,
+      "deliv_pct": 47.67
     }
   ],
   "as_of": "18 Nov 2026"
