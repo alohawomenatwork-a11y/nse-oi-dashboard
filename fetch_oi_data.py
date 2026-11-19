@@ -2064,12 +2064,68 @@ def record_trades_to_journal(executed_trades, session_date_str):
 
     return journal
 
+def audit_and_sync_journal(journal):
+    """
+    Scans the trade journal for any session on or before today that was recorded
+    before candles were available (or today's live session). Fetches the 5m intraday
+    candles and automatically updates real trade executions, P&L, and filters.
+    """
+    if not journal:
+        return journal
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    by_date = {}
+    for t in journal:
+        by_date.setdefault(t.get("date"), []).append(t)
+
+    modified = False
+    for dt_str, trades in sorted(by_date.items()):
+        if not dt_str or dt_str > today_str:
+            continue
+        # Check if any trades on this date missed candle evaluation
+        needs_eval = any(
+            (t.get("bar0_range_pct", 0.0) == 0.0 and not t.get("triggered", False) and not t.get("gap_filtered", False))
+            for t in trades
+        )
+        if needs_eval or dt_str == today_str:
+            symbols = [t["symbol"] for t in trades if t.get("symbol")]
+            if not symbols:
+                continue
+            print(f"[*] Auditing and syncing candles for session {dt_str} ({len(symbols)} symbols)...")
+            bars = fetch_intraday_5m_bars(symbols, target_date=dt_str)
+            if not bars:
+                continue
+            for t in trades:
+                sym = t.get("symbol")
+                b = bars.get(sym)
+                if not b or not b.get("valid"):
+                    continue
+                prev_close = t.get("prev_close") or 0.0
+                res = compute_orb_execution(t.get("side", "BUY"), sym, b, prev_close=prev_close, capital=10000)
+                res["date"] = dt_str
+                t.update(res)
+                modified = True
+
+    if modified:
+        save_trade_journal(journal)
+        try:
+            import db_store
+            for dt_str, day_trades in by_date.items():
+                if dt_str <= today_str:
+                    db_store.save_trade_executions(dt_str, day_trades, prune_stale=True)
+            print("[DB] Synced updated trade executions to SQLite.")
+        except Exception as e:
+            print(f"[warn] DB trade execution sync failed: {e}")
+
+    return journal
+
 def build_journal_tab(journal):
     """
     Renders Tab 4: Comprehensive Trade Journal & Cumulative Performance Metrics.
     Maintains executed trades grouped session by session with daily breaks and P&L totals,
     with an interactive filter to toggle between All Candidates vs Only Executed Trades.
     """
+    journal = audit_and_sync_journal(journal)
     if not journal:
         return """<div class="sec" style="padding:25px;margin:12px;text-align:center">
           <h3 style="color:#fff;margin-bottom:8px">&#128220; No Historic Trades Recorded Yet</h3>
