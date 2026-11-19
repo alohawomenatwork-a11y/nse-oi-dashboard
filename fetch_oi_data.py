@@ -678,7 +678,7 @@ td:first-child{text-align:left;font-weight:700;color:#fff;font-size:11.5px}
 <div class="nav-tabs">
   <button class="tab-btn active" onclick="openTab('daily-tab', this)">&#128202; Daily Dashboard &amp; Picks</button>
   <button class="tab-btn" onclick="openTab('pnl-tab', this)">&#128176; Capital &amp; Day's P&amp;L Tracker</button>
-  <button class="tab-btn" onclick="openTab('historic-tab', this)">&#128197; 1-Week Historic Trend &amp; Setup</button>
+  <button class="tab-btn" onclick="openTab('historic-tab', this)">&#128197; 1-Week &amp; 4-Day Historic Setup</button>
   <button class="tab-btn" onclick="openTab('journal-tab', this)">&#128220; Historic Trade Journal (Database)</button>
 </div>
 
@@ -1750,19 +1750,16 @@ def build_rules_panel():
       </div>
     </div>"""
 
-# ─── HISTORIC 1-WEEK AGGREGATION & RANKING ──────────────────────────────────
-def build_historic_analysis(session, ref_date):
+# ─── HISTORIC MULTI-DAY AGGREGATION & RANKING (5-DAY & 4-DAY) ───────────────
+def get_historic_period_analysis(session, ref_date, num_sessions=5):
     """
-    Downloads and analyzes the past 5 trading days (1 market week).
-    Aggregates cumulative OI Change %, Price Change %, average Delivery %,
-    and ranks the top high-conviction multi-day BUYS and SELLS.
+    Computes multi-day aggregated price, OI and delivery rankings for `num_sessions` (e.g. 5 for 1-Week, 4 for 4-Day).
+    Returns (hist_rows, start_date_str, end_date_str, valid_sessions_count, ignored_hist_count).
     """
-    print("[*] Building 1-Week Historic Trend Analysis...")
     ref_dt = ref_date if isinstance(ref_date, (date, datetime)) else datetime.strptime(str(ref_date), "%Y-%m-%d").date()
     ref_str = ref_dt.strftime("%Y-%m-%d")
-
-    # Strategy 1: Fast & reliable load directly from SQLite daily_oi
     db_file = os.path.join(OUT_DIR, "oi_trading.db")
+
     hist_rows = []
     start_date_str = ""
     end_date_str = ""
@@ -1774,7 +1771,7 @@ def build_historic_analysis(session, ref_date):
             import sqlite3
             with sqlite3.connect(db_file) as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT DISTINCT trade_date FROM daily_oi WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT 6", (ref_str,))
+                cur.execute("SELECT DISTINCT trade_date FROM daily_oi WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?", (ref_str, num_sessions + 1))
                 db_dates = sorted([r[0] for r in cur.fetchall()])
                 if len(db_dates) >= 2:
                     oldest_date = db_dates[0]
@@ -1810,28 +1807,28 @@ def build_historic_analysis(session, ref_date):
                         if p_prev <= 0 or p_curr <= 0 or oi_prev <= 0 or oi_curr <= 0:
                             continue
 
-                        week_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
-                        week_oi_chg = oi_curr - oi_prev
-                        week_oi_pct = round(week_oi_chg / oi_prev * 100, 2)
+                        period_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
+                        period_oi_chg = oi_curr - oi_prev
+                        period_oi_pct = round(period_oi_chg / oi_prev * 100, 2)
                         avg_deliv = avg_deliv_map.get(s, 30.0)
 
                         hist_rows.append({
                             "symbol": s,
                             "curr_close": p_curr,
                             "prev_close": p_prev,
-                            "week_price_chg": week_price_chg,
+                            "price_chg": period_price_chg,
                             "curr_oi": oi_curr,
-                            "week_oi_chg": week_oi_chg,
-                            "week_oi_pct": week_oi_pct,
+                            "oi_chg": period_oi_chg,
+                            "oi_pct": period_oi_pct,
                             "avg_deliv": avg_deliv
                         })
         except Exception as e:
-            print(f"[warn] SQLite historic trend load failed, falling back to Bhavcopy: {e}")
+            print(f"[warn] SQLite multi-day ({num_sessions}d) load failed: {e}")
             hist_rows = []
 
-    # Strategy 2: Fallback to direct NSE Bhavcopy download if SQLite didn't yield enough data
+    # Fallback to direct NSE Bhavcopy download if SQLite didn't yield enough data
     if len(hist_rows) < 5:
-        days = prev_trading_days(ref_dt, n=6)
+        days = prev_trading_days(ref_dt, n=num_sessions + 1)
         daily_ois = []
         daily_prices = []
         valid_dates = []
@@ -1841,79 +1838,77 @@ def build_historic_analysis(session, ref_date):
             eq_df = download_eq_bhavcopy(session, d)
             oi_m  = parse_fo_oi(fo_df)
             p_m   = parse_eq_prices(eq_df)
-            # CRITICAL FIX: Only keep days where BOTH EQ prices AND FO OI are valid!
             if p_m and oi_m:
                 daily_ois.append(oi_m)
                 daily_prices.append(p_m)
                 valid_dates.append(d)
 
-        if len(valid_dates) < 2:
-            return "<div class='sec' style='padding:20px'>Failed to load consecutive historical Bhavcopies.</div>"
+        if len(valid_dates) >= 2:
+            latest_idx = 0
+            oldest_idx = len(valid_dates) - 1
+            valid_sessions_count = len(valid_dates) - 1
 
-        latest_idx = 0
-        oldest_idx = len(valid_dates) - 1
-        valid_sessions_count = len(valid_dates) - 1
+            latest_p = daily_prices[latest_idx]
+            oldest_p = daily_prices[oldest_idx]
+            latest_oi = daily_ois[latest_idx]
+            oldest_oi = daily_ois[oldest_idx]
 
-        latest_p = daily_prices[latest_idx]
-        oldest_p = daily_prices[oldest_idx]
-        latest_oi = daily_ois[latest_idx]
-        oldest_oi = daily_ois[oldest_idx]
+            start_date_str = valid_dates[oldest_idx].strftime("%d %b")
+            end_date_str   = valid_dates[latest_idx].strftime("%d %b %Y")
 
-        start_date_str = valid_dates[oldest_idx].strftime("%d %b")
-        end_date_str   = valid_dates[latest_idx].strftime("%d %b %Y")
+            ca_exclusions = fetch_corporate_action_exclusions(session, valid_dates[oldest_idx], valid_dates[latest_idx] + timedelta(days=1)) if session else set()
+            ignored_hist_count = 0
+            sym_pool = set(latest_p.keys()) & set(latest_oi.keys())
+            hist_rows = []
 
-        ca_exclusions = fetch_corporate_action_exclusions(session, valid_dates[oldest_idx], valid_dates[latest_idx] + timedelta(days=1)) if session else set()
-        ignored_hist_count = 0
-        sym_pool = set(latest_p.keys()) & set(latest_oi.keys())
-        hist_rows = []
+            for s in sym_pool:
+                if s in ca_exclusions:
+                    ignored_hist_count += 1
+                    continue
+                p_curr = latest_p[s]["close"]
+                p_prev = oldest_p.get(s, {}).get("close")
+                if not p_prev:
+                    continue
+                oi_curr = latest_oi.get(s, 0)
+                oi_prev = oldest_oi.get(s, 0)
+                if oi_prev <= 0 or oi_curr <= 0:
+                    continue
 
-        for s in sym_pool:
-            if s in ca_exclusions:
-                ignored_hist_count += 1
-                continue
-            p_curr = latest_p[s]["close"]
-            p_prev = oldest_p.get(s, {}).get("close")
-            if not p_prev:
-                continue
-            oi_curr = latest_oi.get(s, 0)
-            oi_prev = oldest_oi.get(s, 0)
-            if oi_prev <= 0 or oi_curr <= 0:
-                continue
+                period_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
+                period_oi_chg = oi_curr - oi_prev
+                period_oi_pct = round(period_oi_chg / oi_prev * 100, 2)
+                deliv_vals = [daily_prices[i][s]["deliv_pct"] for i in range(len(valid_dates)) if s in daily_prices[i] and daily_prices[i][s].get("deliv_pct") is not None]
+                avg_deliv = round(sum(deliv_vals) / len(deliv_vals), 2) if deliv_vals else 30.0
 
-            week_price_chg = round((p_curr - p_prev) / p_prev * 100, 2)
-            week_oi_chg = oi_curr - oi_prev
-            week_oi_pct = round(week_oi_chg / oi_prev * 100, 2)
-            deliv_vals = [daily_prices[i][s]["deliv_pct"] for i in range(len(valid_dates)) if s in daily_prices[i] and daily_prices[i][s].get("deliv_pct") is not None]
-            avg_deliv = round(sum(deliv_vals) / len(deliv_vals), 2) if deliv_vals else 30.0
+                hist_rows.append({
+                    "symbol": s,
+                    "curr_close": p_curr,
+                    "prev_close": p_prev,
+                    "price_chg": period_price_chg,
+                    "curr_oi": oi_curr,
+                    "oi_chg": period_oi_chg,
+                    "oi_pct": period_oi_pct,
+                    "avg_deliv": avg_deliv
+                })
 
-            hist_rows.append({
-                "symbol": s,
-                "curr_close": p_curr,
-                "prev_close": p_prev,
-                "week_price_chg": week_price_chg,
-                "curr_oi": oi_curr,
-                "week_oi_chg": week_oi_chg,
-                "week_oi_pct": week_oi_pct,
-                "avg_deliv": avg_deliv
-            })
+    return hist_rows, start_date_str, end_date_str, valid_sessions_count, ignored_hist_count
 
-    # Filter & rank 1-Week Buys & Sells
-    # 1-Week Buys: Consistent Price Up + OI Up (Fresh Long build-up) or Price Up + OI Down (sustained short squeeze)
-    # Ranked with heavy weight on sustained delivery % and steady OI increase
+
+def render_historic_deck_html(hist_rows, start_date_str, end_date_str, valid_sessions_count, ignored_hist_count, horizon_title="1-Week"):
     hist_buys = []
     for r in hist_rows:
-        if r["week_price_chg"] > 0:
+        if r["price_chg"] > 0:
             deliv = r["avg_deliv"] or 30.0
-            score = (deliv * 1.2) + (r["week_oi_pct"] * 0.8) + (r["week_price_chg"] * 1.5)
+            score = (deliv * 1.2) + (r["oi_pct"] * 0.8) + (r["price_chg"] * 1.5)
             r_c = dict(r)
             r_c["score"] = score
             hist_buys.append(r_c)
 
     hist_sells = []
     for r in hist_rows:
-        if r["week_price_chg"] < 0:
+        if r["price_chg"] < 0:
             deliv = r["avg_deliv"] or 30.0
-            score = (deliv * 1.1) + (abs(r["week_oi_pct"]) * 0.9) + (abs(r["week_price_chg"]) * 1.6)
+            score = (deliv * 1.1) + (abs(r["oi_pct"]) * 0.9) + (abs(r["price_chg"]) * 1.6)
             r_c = dict(r)
             r_c["score"] = score
             hist_sells.append(r_c)
@@ -1927,11 +1922,11 @@ def build_historic_analysis(session, ref_date):
         h_buy_trs += f"""<tr>
           <td><span class="rank-badge rank-buy">#{idx}</span> <b>{r['symbol']}</b></td>
           <td><b>{fmt(r['curr_close'])}</b></td>
-          <td>{pct_cell(r['week_price_chg'])}</td>
+          <td>{pct_cell(r['price_chg'])}</td>
           <td>{fmti(r['curr_oi'])}</td>
-          <td>{oi_pill(r['week_oi_chg'], r['week_oi_pct'])}</td>
+          <td>{oi_pill(r['oi_chg'], r['oi_pct'])}</td>
           <td>{deliv_cell(r['avg_deliv'])}</td>
-          <td><div class="plan-note"><b>Multi-day Trend:</b> Strong persistent accumulation over the week with {r['avg_deliv']}% avg delivery. Prime candidate for swing / positional longs.</div></td>
+          <td><div class="plan-note"><b>{horizon_title} Setup:</b> Strong persistent accumulation with {r['avg_deliv']}% avg delivery. Prime candidate for swing / positional longs.</div></td>
         </tr>"""
 
     # Render SELL rows
@@ -1940,18 +1935,17 @@ def build_historic_analysis(session, ref_date):
         h_sell_trs += f"""<tr>
           <td><span class="rank-badge rank-sell">#{idx}</span> <b>{r['symbol']}</b></td>
           <td><b>{fmt(r['curr_close'])}</b></td>
-          <td>{pct_cell(r['week_price_chg'])}</td>
+          <td>{pct_cell(r['price_chg'])}</td>
           <td>{fmti(r['curr_oi'])}</td>
-          <td>{oi_pill(r['week_oi_chg'], r['week_oi_pct'])}</td>
+          <td>{oi_pill(r['oi_chg'], r['oi_pct'])}</td>
           <td>{deliv_cell(r['avg_deliv'])}</td>
-          <td><div class="plan-note"><b>Multi-day Trend:</b> Persistent institutional selling / supply overhang over the past week. High probability continuation sell.</div></td>
+          <td><div class="plan-note"><b>{horizon_title} Breakdown:</b> Persistent institutional selling / supply overhang. High probability continuation sell.</div></td>
         </tr>"""
 
-    # Overview summary stats
-    bull_count = sum(1 for r in hist_rows if r['week_price_chg'] > 0 and r['week_oi_chg'] > 0)
-    bear_count = sum(1 for r in hist_rows if r['week_price_chg'] < 0 and r['week_oi_chg'] > 0)
+    bull_count = sum(1 for r in hist_rows if r['price_chg'] > 0 and r['oi_chg'] > 0)
+    bear_count = sum(1 for r in hist_rows if r['price_chg'] < 0 and r['oi_chg'] > 0)
 
-    html = f"""
+    return f"""
     <div class="hist-summary">
       <div class="hist-stat">
         <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Analysis Window</span>
@@ -1959,7 +1953,7 @@ def build_historic_analysis(session, ref_date):
         <div class="sub">{valid_sessions_count} Completed Trading Sessions</div>
       </div>
       <div class="hist-stat">
-        <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Weekly Market Breadth</span>
+        <span style="font-size:10px;text-transform:uppercase;color:var(--muted)">Multi-Day Market Breadth</span>
         <div class="val"><span style="color:var(--green)">{bull_count} Longs</span> &nbsp;|&nbsp; <span style="color:var(--red)">{bear_count} Shorts</span></div>
         <div class="sub">Stocks with persistent OI expansion</div>
       </div>
@@ -1973,13 +1967,13 @@ def build_historic_analysis(session, ref_date):
     <div class="trade-deck">
       <div class="rec-card rec-buy">
         <div class="rec-hdr">
-          <div>&#127942; Top 5 Weekly High-Conviction BUYS (Ranked)</div>
-          <span style="font-size:9px;color:#00ff9d;background:rgba(0,255,157,0.12);padding:2px 6px;border-radius:4px">1-Week Trend</span>
+          <div>&#127942; Top 5 {horizon_title} High-Conviction BUYS (Ranked)</div>
+          <span style="font-size:9px;color:#00ff9d;background:rgba(0,255,157,0.12);padding:2px 6px;border-radius:4px">{horizon_title} Trend</span>
         </div>
         <div class="tw">
           <table class="rec-tbl hist-table">
             <thead>
-              <tr><th>Stock</th><th>Current Close</th><th>1-Wk Price%</th><th>Total OI</th><th>1-Wk OI%</th><th>Avg Deliv%</th><th>Swing Plan</th></tr>
+              <tr><th>Stock</th><th>Current Close</th><th>{horizon_title} Price%</th><th>Total OI</th><th>{horizon_title} OI%</th><th>Avg Deliv%</th><th>Swing Plan</th></tr>
             </thead>
             <tbody>{h_buy_trs}</tbody>
           </table>
@@ -1988,19 +1982,82 @@ def build_historic_analysis(session, ref_date):
 
       <div class="rec-card rec-sell">
         <div class="rec-hdr">
-          <div>&#9888; Top 5 Weekly High-Conviction SELLS (Ranked)</div>
-          <span style="font-size:9px;color:#ff7799;background:rgba(255,119,153,0.12);padding:2px 6px;border-radius:4px">1-Week Breakdown</span>
+          <div>&#9888; Top 5 {horizon_title} High-Conviction SELLS (Ranked)</div>
+          <span style="font-size:9px;color:#ff7799;background:rgba(255,119,153,0.12);padding:2px 6px;border-radius:4px">{horizon_title} Breakdown</span>
         </div>
         <div class="tw">
           <table class="rec-tbl hist-table">
             <thead>
-              <tr><th>Stock</th><th>Current Close</th><th>1-Wk Price%</th><th>Total OI</th><th>1-Wk OI%</th><th>Avg Deliv%</th><th>Swing Plan</th></tr>
+              <tr><th>Stock</th><th>Current Close</th><th>{horizon_title} Price%</th><th>Total OI</th><th>{horizon_title} OI%</th><th>Avg Deliv%</th><th>Swing Plan</th></tr>
             </thead>
             <tbody>{h_sell_trs}</tbody>
           </table>
         </div>
       </div>
     </div>
+    """
+
+
+def build_historic_analysis(session, ref_date):
+    """
+    Renders Tab 3: Multi-Day Historic Trend & Setup with interactive horizon toggles
+    for both 1-Week (5-Day Trend) and 4-Day Historic Setup.
+    """
+    print("[*] Building Multi-Day Historic Trend Analysis (5-Day & 4-Day)...")
+    h5_rows, s5_str, e5_str, sess5_cnt, ign5_cnt = get_historic_period_analysis(session, ref_date, num_sessions=5)
+    deck_5d = render_historic_deck_html(h5_rows, s5_str, e5_str, sess5_cnt, ign5_cnt, horizon_title="1-Week (5-Day)")
+
+    h4_rows, s4_str, e4_str, sess4_cnt, ign4_cnt = get_historic_period_analysis(session, ref_date, num_sessions=4)
+    deck_4d = render_historic_deck_html(h4_rows, s4_str, e4_str, sess4_cnt, ign4_cnt, horizon_title="4-Day")
+
+    html = f"""
+    <!-- HORIZON SUB-TAB SELECTOR -->
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:0 10px 14px 10px;padding:10px 14px;background:#101726;border:1px solid #23304c;border-radius:6px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:12.5px;font-weight:700;color:#fff">&#9201; Select Horizon:</span>
+        <div style="display:inline-flex;background:#0b0f19;border-radius:5px;border:1px solid #1c263c;padding:2px">
+          <button id="btn-hist-5d" onclick="switchHistoricHorizon('5d')" style="background:#1b2438;color:#00ff9d;border:none;padding:5px 14px;border-radius:4px;font-size:11.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+            &#128197; 1-Week (5-Day Trend)
+          </button>
+          <button id="btn-hist-4d" onclick="switchHistoricHorizon('4d')" style="background:transparent;color:var(--muted);border:none;padding:5px 14px;border-radius:4px;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+            &#9889; 4-Day Historic Setup
+          </button>
+        </div>
+      </div>
+      <div id="hist-horizon-badge" style="font-size:11px;color:var(--blue);font-weight:600">
+        &#9679; Multi-Day Institutional Accumulation &amp; Delivery Build-up
+      </div>
+    </div>
+
+    <!-- 1-WEEK (5-DAY) VIEW -->
+    <div id="historic-view-5d">
+      {deck_5d}
+    </div>
+
+    <!-- 4-DAY VIEW -->
+    <div id="historic-view-4d" style="display:none">
+      {deck_4d}
+    </div>
+
+    <script>
+    function switchHistoricHorizon(h) {{
+      var v5 = document.getElementById('historic-view-5d');
+      var v4 = document.getElementById('historic-view-4d');
+      var b5 = document.getElementById('btn-hist-5d');
+      var b4 = document.getElementById('btn-hist-4d');
+      if (h === '4d') {{
+        if (v5) v5.style.display = 'none';
+        if (v4) v4.style.display = 'block';
+        if (b5) {{ b5.style.background = 'transparent'; b5.style.color = 'var(--muted)'; }}
+        if (b4) {{ b4.style.background = '#1b2438'; b4.style.color = 'var(--blue)'; }}
+      }} else {{
+        if (v5) v5.style.display = 'block';
+        if (v4) v4.style.display = 'none';
+        if (b5) {{ b5.style.background = '#1b2438'; b5.style.color = '#00ff9d'; }}
+        if (b4) {{ b4.style.background = 'transparent'; b4.style.color = 'var(--muted)'; }}
+      }}
+    }}
+    </script>
     """
     return html
 
