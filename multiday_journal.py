@@ -111,6 +111,129 @@ def audit_and_sync_multiday_journal(journal, n_days=5):
 
     return journal
 
+def extract_top_multiday_candidates(hist_rows):
+    """
+    Extracts top 5 BUY candidates and top 5 SELL candidates based on institutional multi-day scoring.
+    """
+    hist_buys, hist_sells = [], []
+    for r in hist_rows:
+        if r["price_chg"] > 0:
+            deliv = r.get("avg_deliv") or 30.0
+            score = (deliv * 1.2) + (r["oi_pct"] * 0.8) + (r["price_chg"] * 1.5)
+            r_c = dict(r)
+            r_c["score"] = score
+            r_c["side"] = "BUY"
+            hist_buys.append(r_c)
+        elif r["price_chg"] < 0:
+            deliv = r.get("avg_deliv") or 30.0
+            score = (deliv * 1.1) + (abs(r["oi_pct"]) * 0.9) + (abs(r["price_chg"]) * 1.6)
+            r_c = dict(r)
+            r_c["score"] = score
+            r_c["side"] = "SELL"
+            hist_sells.append(r_c)
+    top_buys = sorted(hist_buys, key=lambda x: x["score"], reverse=True)[:5]
+    top_sells = sorted(hist_sells, key=lambda x: x["score"], reverse=True)[:5]
+    return top_buys, top_sells
+
+def record_multiday_candidates_to_journal(candidates, session_date_str, n_days=5):
+    """
+    Ensures today's multi-day candidates exist in the multi-day journal,
+    fetches their 5m intraday candles, computes ORB execution, and saves to JSON & DB.
+    """
+    if not candidates:
+        return load_trade_journal_multiday(n_days)
+
+    from fetch_oi_data import fetch_intraday_5m_bars, compute_orb_execution
+    import db_store
+
+    journal = load_trade_journal_multiday(n_days)
+    symbols = [c["symbol"] for c in candidates]
+    bars = fetch_intraday_5m_bars(symbols, target_date=session_date_str)
+
+    modified = False
+    for c in candidates:
+        sym = c["symbol"]
+        side = c["side"]
+        prev_close = c.get("curr_close") or c.get("prev_close") or 0.0
+        b = bars.get(sym)
+        t = compute_orb_execution(side, sym, b, prev_close=prev_close, capital=10000)
+
+        record = {
+            "date": session_date_str,
+            "symbol": sym,
+            "side": side,
+            "triggered": t.get("triggered", False),
+            "trigger_time": t.get("trigger_time", "-"),
+            "entry_price": t.get("entry_price", 0.0),
+            "sl_price": t.get("sl_price", 0.0),
+            "qty": t.get("qty", 0),
+            "risk_rupees": t.get("risk_rupees", 0.0),
+            "risk_pct": t.get("risk_pct", 0.0),
+            "max_profit_rupees": t.get("max_profit_rupees", 0.0),
+            "max_profit_pct": t.get("max_profit_pct", 0.0),
+            "exit_price": t.get("exit_price", 0.0),
+            "exit_time": t.get("exit_time", "15:10"),
+            "exit_reason": t.get("exit_reason", "-"),
+            "margin_used": t.get("margin_used", 0.0),
+            "pnl": t.get("pnl", 0.0),
+            "pnl_pct": t.get("pnl_pct", 0.0),
+            "target_1to1": t.get("target_1to1", 0.0),
+            "target_1to1_hit": t.get("target_1to1_hit", False),
+            "target_1to1_time": t.get("target_1to1_time", "-"),
+            "pnl_1to1": t.get("pnl_1to1", 0.0),
+            "pnl_1to1_pct": t.get("pnl_1to1_pct", 0.0),
+            "gap_filtered": t.get("gap_filtered", False),
+            "erratic_filtered": t.get("erratic_filtered", False),
+            "prev_close": prev_close,
+            "gap_pct": t.get("gap_pct", 0.0),
+            "bar0_range_pct": t.get("bar0_range_pct", 0.0),
+            "filter_open_prev_failed": t.get("filter_open_prev_failed", False),
+            "filter_extreme_gap_failed": t.get("filter_extreme_gap_failed", False),
+            "filter_erratic_range_failed": t.get("filter_erratic_range_failed", False),
+            "sim_triggered": t.get("sim_triggered", False),
+            "sim_entry_price": t.get("sim_entry_price", 0.0),
+            "sim_trigger_time": t.get("sim_trigger_time", "-"),
+            "sim_sl_price": t.get("sim_sl_price", 0.0),
+            "sim_exit_price": t.get("sim_exit_price", 0.0),
+            "sim_exit_time": t.get("sim_exit_time", "15:10"),
+            "sim_exit_reason": t.get("sim_exit_reason", "LTP"),
+            "sim_qty": t.get("sim_qty", 0),
+            "sim_margin_used": t.get("sim_margin_used", 0.0),
+            "sim_risk_rupees": t.get("sim_risk_rupees", 0.0),
+            "sim_risk_pct": t.get("sim_risk_pct", 0.0),
+            "sim_max_profit_rupees": t.get("sim_max_profit_rupees", 0.0),
+            "sim_max_profit_pct": t.get("sim_max_profit_pct", 0.0),
+            "sim_target_1to1": t.get("sim_target_1to1", 0.0),
+            "sim_target_1to1_hit": t.get("sim_target_1to1_hit", False),
+            "sim_target_1to1_time": t.get("sim_target_1to1_time", "-"),
+            "sim_pnl": t.get("sim_pnl", 0.0),
+            "sim_pnl_pct": t.get("sim_pnl_pct", 0.0),
+            "sim_pnl_1to1": t.get("sim_pnl_1to1", 0.0),
+            "sim_pnl_1to1_pct": t.get("sim_pnl_1to1_pct", 0.0),
+        }
+
+        replaced = False
+        for idx, item in enumerate(journal):
+            if item.get("date") == session_date_str and item.get("symbol") == sym:
+                journal[idx] = record
+                replaced = True
+                modified = True
+                break
+        if not replaced:
+            journal.append(record)
+            modified = True
+
+    if modified:
+        save_trade_journal_multiday(journal, n_days)
+        rule_ver = f"ORB_5M_{n_days}D"
+        try:
+            today_trades = [t for t in journal if t.get("date") == session_date_str]
+            db_store.save_trade_executions(session_date_str, today_trades, rule_version=rule_ver, prune_stale=True, db_path=DB_PATH)
+        except Exception as e:
+            print(f"[warn] DB multi-day save failed: {e}")
+
+    return journal
+
 def render_multiday_journal_deck(journal, horizon_id="5d", horizon_title="1-Week (5-Day Trend)"):
     """
     Renders the complete Historical Trade Journal Deck for the given multi-day horizon:
@@ -617,3 +740,4 @@ def generate_multiday_journal_scripts(journal_4d, journal_5d):
     }}
     </script>
     """
+
