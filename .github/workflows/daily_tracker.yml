@@ -46,11 +46,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests yfinance pandas websocket-client
 
+      - name: Verify NSE Market is Open Today
+        id: check_market
+        if: github.event_name == 'schedule'
+        run: |
+          if python check_market_open.py; then
+            echo "market_open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "market_open=false" >> "$GITHUB_OUTPUT"
+            echo "Market is closed today (Weekend or NSE Holiday). Skipping update."
+          fi
+
       - name: Run OI analysis & trade sync
+        if: steps.check_market.outputs.market_open != 'false'
         run: |
           python fetch_oi_data.py
 
       - name: Archive daily snapshot & update index
+        if: steps.check_market.outputs.market_open != 'false'
         run: |
           mkdir -p history
           TODAY=$(date +'%Y-%m-%d')
@@ -59,6 +72,7 @@ jobs:
           cp oi_data.json history/oi_data-${TODAY}.json 2>/dev/null || true
 
       - name: Commit updates to gh-pages
+        if: steps.check_market.outputs.market_open != 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -67,6 +81,7 @@ jobs:
           git push origin gh-pages
 
       - name: Sync to main
+        if: steps.check_market.outputs.market_open != 'false'
         run: |
           git checkout main
           git merge gh-pages -m "chore(auto): sync hourly update to main [skip ci]" || true
@@ -74,7 +89,7 @@ jobs:
           git checkout gh-pages
 
       - name: Send Telegram Daily Summary (Post-Market)
-        if: github.event.schedule == '47 11 * * 1-5' || github.event_name == 'workflow_dispatch'
+        if: steps.check_market.outputs.market_open != 'false' && (github.event.schedule == '47 11 * * 1-5' || github.event_name == 'workflow_dispatch')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

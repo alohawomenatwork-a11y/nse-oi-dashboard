@@ -779,6 +779,32 @@ var _currentIntervalIdx = 0;
 var _secondsRemaining = 3600;
 var _autoRefreshTimer = null;
 
+var NSE_HOLIDAYS_2026 = [
+  '2026-01-15', '2026-01-26', '2026-02-15', '2026-03-03', '2026-03-21',
+  '2026-03-26', '2026-03-31', '2026-04-03', '2026-04-14', '2026-05-01',
+  '2026-05-28', '2026-06-26', '2026-08-15', '2026-09-14', '2026-10-02',
+  '2026-10-20', '2026-11-08', '2026-11-10', '2026-11-24', '2026-12-25'
+];
+
+function isIndianMarketOpenNow() {
+  var now = new Date();
+  var istStr = now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+  var istDate = new Date(istStr);
+  var day = istDate.getDay(); // 0 is Sunday, 6 is Saturday
+  if (day === 0 || day === 6) return false;
+
+  var y = istDate.getFullYear();
+  var m = String(istDate.getMonth() + 1).padStart(2, '0');
+  var d = String(istDate.getDate()).padStart(2, '0');
+  var todayYmd = y + '-' + m + '-' + d;
+
+  if (NSE_HOLIDAYS_2026.indexOf(todayYmd) !== -1) return false;
+
+  var totalMin = istDate.getHours() * 60 + istDate.getMinutes();
+  // Active market hours: 09:15 AM (555 min) to 03:35 PM (935 min) IST
+  return totalMin >= 555 && totalMin <= 935;
+}
+
 function initAutoRefreshEngine() {
   var saved = localStorage.getItem('dashboard_auto_refresh_sec');
   if (saved !== null) {
@@ -792,6 +818,13 @@ function initAutoRefreshEngine() {
   if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
   _autoRefreshTimer = setInterval(function() {
     if (_autoRefreshIntervals[_currentIntervalIdx] <= 0) return;
+
+    // Only count down and reload if market is open right now
+    if (!isIndianMarketOpenNow()) {
+      updateTimerText();
+      return;
+    }
+
     _secondsRemaining--;
     if (_secondsRemaining <= 0) {
       window.location.reload();
@@ -806,7 +839,8 @@ function updateAutoRefreshUI() {
   var pill = document.getElementById('auto-refresh-pill');
   if (lbl) lbl.textContent = _autoRefreshLabels[_currentIntervalIdx];
   if (pill) {
-    if (_autoRefreshIntervals[_currentIntervalIdx] > 0) {
+    var marketOpen = isIndianMarketOpenNow();
+    if (_autoRefreshIntervals[_currentIntervalIdx] > 0 && marketOpen) {
       pill.style.background = 'rgba(0,196,122,0.12)';
       pill.style.borderColor = 'rgba(0,196,122,0.28)';
       pill.style.color = '#00ff9d';
@@ -824,6 +858,10 @@ function updateTimerText() {
   if (!timerEl) return;
   if (_autoRefreshIntervals[_currentIntervalIdx] <= 0) {
     timerEl.textContent = '(Paused)';
+    return;
+  }
+  if (!isIndianMarketOpenNow()) {
+    timerEl.textContent = '(Market Closed)';
     return;
   }
   var m = Math.floor(_secondsRemaining / 60);
