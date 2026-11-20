@@ -1,8 +1,20 @@
-name: Daily NSE OI & Trade Performance Tracker
+name: Hourly & Daily NSE OI & Trade Performance Tracker
 
 on:
   schedule:
-    # Single daily run Mon-Fri at 5:17 PM IST (11:47 UTC, off-peak minute to avoid GitHub Actions queue delays)
+    # Hourly runs Mon-Fri during Indian Market Hours (09:15 AM to 03:30 PM IST):
+    # 04:20 UTC -> 09:50 AM IST (after 1st 35m of trading)
+    # 05:20 UTC -> 10:50 AM IST
+    # 06:20 UTC -> 11:50 AM IST
+    # 07:20 UTC -> 12:50 PM IST
+    # 08:20 UTC -> 01:50 PM IST
+    # 09:20 UTC -> 02:50 PM IST
+    - cron: '20 4-9 * * 1-5'
+    # Market close 3:35 PM IST squareoff run:
+    # 10:05 UTC -> 03:35 PM IST
+    - cron: '5 10 * * 1-5'
+    # EOD Final Bhavcopy run & daily archive:
+    # 11:47 UTC -> 05:17 PM IST
     - cron: '47 11 * * 1-5'
   workflow_dispatch:
 
@@ -22,6 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: gh-pages
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,7 +46,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests yfinance pandas websocket-client
 
-      - name: Run EOD OI analysis
+      - name: Run OI analysis & trade sync
         run: |
           python fetch_oi_data.py
 
@@ -45,19 +58,25 @@ jobs:
           cp dashboard.html history/dashboard-${TODAY}.html 2>/dev/null || true
           cp oi_data.json history/oi_data-${TODAY}.json 2>/dev/null || true
 
-      - name: Commit daily updates
+      - name: Commit updates to gh-pages
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add dashboard.html index.html oi_data.json trade_history.json oi_trading.db history/
-          git commit -m "chore(auto): daily OI & trades performance update [skip ci]" || echo "No changes to commit"
+          git add dashboard.html index.html oi_data.json trade_history.json trade_history_4d.json trade_history_5d.json oi_trading.db history/
+          git commit -m "chore(auto): hourly market OI & trades performance update [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 
-      - name: Send Telegram Daily Summary
+      - name: Sync to main
+        run: |
+          git checkout main
+          git merge gh-pages -m "chore(auto): sync hourly update to main [skip ci]" || true
+          git push origin main || true
+          git checkout gh-pages
+
+      - name: Send Telegram Daily Summary (Post-Market)
+        if: github.event.schedule == '47 11 * * 1-5' || github.event_name == 'workflow_dispatch'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python telegram_notify.py
-
-
+          python telegram_notify.py || true
