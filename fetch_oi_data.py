@@ -2023,19 +2023,25 @@ def build_historic_analysis(session, ref_date):
     from multiday_journal import (
         load_trade_journal_multiday,
         audit_and_sync_multiday_journal,
+        extract_top_multiday_candidates,
+        record_multiday_candidates_to_journal,
         render_multiday_journal_deck,
         generate_multiday_journal_scripts
     )
 
+    exec_session_date = next_trading_day(ref_date).strftime("%Y-%m-%d") if ref_date else datetime.now().strftime("%Y-%m-%d")
+
     h5_rows, s5_str, e5_str, sess5_cnt, ign5_cnt = get_historic_period_analysis(session, ref_date, num_sessions=5)
     deck_5d = render_historic_deck_html(h5_rows, s5_str, e5_str, sess5_cnt, ign5_cnt, horizon_title="1-Week (5-Day)")
-    j5 = load_trade_journal_multiday(5)
+    top_5d_buys, top_5d_sells = extract_top_multiday_candidates(h5_rows)
+    j5 = record_multiday_candidates_to_journal(top_5d_buys + top_5d_sells, exec_session_date, n_days=5)
     j5 = audit_and_sync_multiday_journal(j5, 5)
     journal_deck_5d = render_multiday_journal_deck(j5, horizon_id="5d", horizon_title="1-Week (5-Day Trend)")
 
     h4_rows, s4_str, e4_str, sess4_cnt, ign4_cnt = get_historic_period_analysis(session, ref_date, num_sessions=4)
     deck_4d = render_historic_deck_html(h4_rows, s4_str, e4_str, sess4_cnt, ign4_cnt, horizon_title="4-Day")
-    j4 = load_trade_journal_multiday(4)
+    top_4d_buys, top_4d_sells = extract_top_multiday_candidates(h4_rows)
+    j4 = record_multiday_candidates_to_journal(top_4d_buys + top_4d_sells, exec_session_date, n_days=4)
     j4 = audit_and_sync_multiday_journal(j4, 4)
     journal_deck_4d = render_multiday_journal_deck(j4, horizon_id="4d", horizon_title="4-Day Historic Setup")
 
