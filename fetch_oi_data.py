@@ -668,7 +668,12 @@ td:first-child{text-align:left;font-weight:700;color:#fff;font-size:11.5px}
   <h1>Top 10 &nbsp;&middot;&nbsp; Market Sentiments &nbsp;&middot;&nbsp;
       <span>OI Change &amp; Price Change Analysis</span></h1>
   <div class="meta">
-    <span class="eod-badge">END OF DAY</span>
+    <div id="auto-refresh-pill" style="display:inline-flex;align-items:center;gap:6px;background:rgba(0,196,122,0.12);border:1px solid rgba(0,196,122,0.28);border-radius:5px;padding:3px 9px;font-size:10.5px;color:#00ff9d;cursor:pointer;transition:all 0.15s" title="Click to cycle interval: 60m &rarr; 30m &rarr; 15m &rarr; Off" onclick="cycleAutoRefreshInterval()">
+      <span style="font-size:11px">&#128260;</span>
+      <span>Auto-Refresh: <b id="auto-refresh-lbl">60m</b></span>
+      <span id="auto-refresh-timer" style="font-size:9.5px;color:var(--muted);margin-left:2px">(60:00)</span>
+    </div>
+    <span class="eod-badge">LIVE TRACKER</span>
     <span>__AS_OF__</span>
     <span class="src-badge">__OI_SRC__</span>
   </div>
@@ -765,6 +770,78 @@ function openTab(tabId, btn) {
       }
     }, 60);
   }
+}
+
+// ── CLIENT-SIDE HOURLY AUTO-REFRESH ENGINE ─────────────────────────────────────
+var _autoRefreshIntervals = [3600, 1800, 900, 0];
+var _autoRefreshLabels = ['60m', '30m', '15m', 'Off'];
+var _currentIntervalIdx = 0;
+var _secondsRemaining = 3600;
+var _autoRefreshTimer = null;
+
+function initAutoRefreshEngine() {
+  var saved = localStorage.getItem('dashboard_auto_refresh_sec');
+  if (saved !== null) {
+    var val = parseInt(saved, 10);
+    var idx = _autoRefreshIntervals.indexOf(val);
+    if (idx !== -1) _currentIntervalIdx = idx;
+  }
+  _secondsRemaining = _autoRefreshIntervals[_currentIntervalIdx];
+  updateAutoRefreshUI();
+
+  if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+  _autoRefreshTimer = setInterval(function() {
+    if (_autoRefreshIntervals[_currentIntervalIdx] <= 0) return;
+    _secondsRemaining--;
+    if (_secondsRemaining <= 0) {
+      window.location.reload();
+      return;
+    }
+    updateTimerText();
+  }, 1000);
+}
+
+function updateAutoRefreshUI() {
+  var lbl = document.getElementById('auto-refresh-lbl');
+  var pill = document.getElementById('auto-refresh-pill');
+  if (lbl) lbl.textContent = _autoRefreshLabels[_currentIntervalIdx];
+  if (pill) {
+    if (_autoRefreshIntervals[_currentIntervalIdx] > 0) {
+      pill.style.background = 'rgba(0,196,122,0.12)';
+      pill.style.borderColor = 'rgba(0,196,122,0.28)';
+      pill.style.color = '#00ff9d';
+    } else {
+      pill.style.background = 'rgba(107,114,128,0.12)';
+      pill.style.borderColor = 'rgba(107,114,128,0.28)';
+      pill.style.color = 'var(--muted)';
+    }
+  }
+  updateTimerText();
+}
+
+function updateTimerText() {
+  var timerEl = document.getElementById('auto-refresh-timer');
+  if (!timerEl) return;
+  if (_autoRefreshIntervals[_currentIntervalIdx] <= 0) {
+    timerEl.textContent = '(Paused)';
+    return;
+  }
+  var m = Math.floor(_secondsRemaining / 60);
+  var s = _secondsRemaining % 60;
+  timerEl.textContent = '(' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s + ')';
+}
+
+function cycleAutoRefreshInterval() {
+  _currentIntervalIdx = (_currentIntervalIdx + 1) % _autoRefreshIntervals.length;
+  _secondsRemaining = _autoRefreshIntervals[_currentIntervalIdx];
+  localStorage.setItem('dashboard_auto_refresh_sec', _autoRefreshIntervals[_currentIntervalIdx]);
+  updateAutoRefreshUI();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initAutoRefreshEngine);
+} else {
+  initAutoRefreshEngine();
 }
 
 // ── LIVE P&L REFRESH ENGINE ──────────────────────────────────────────────────
