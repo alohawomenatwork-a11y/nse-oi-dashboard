@@ -185,32 +185,6 @@
       "deliv_pct": 63.86
     },
     {
-      "symbol": "MANAPPURAM",
-      "last_close": 282.85,
-      "open": 273.0,
-      "high": 282.15,
-      "low": 270.5,
-      "close": 280.5,
-      "price_chg": -0.83,
-      "oi": 77952000,
-      "oi_chg": 3591000,
-      "oi_chg_pct": 4.83,
-      "deliv_pct": 32.14
-    },
-    {
-      "symbol": "PAGEIND",
-      "last_close": 31065.0,
-      "open": 30995.0,
-      "high": 31280.0,
-      "low": 30650.0,
-      "close": 31020.0,
-      "price_chg": -0.14,
-      "oi": 395420,
-      "oi_chg": 17460,
-      "oi_chg_pct": 4.62,
-      "deliv_pct": 52.78
-    },
-    {
       "symbol": "NATIONALUM",
       "last_close": 307.0,
       "open": 299.1,
@@ -261,6 +235,32 @@
       "oi_chg": 1136800,
       "oi_chg_pct": 3.61,
       "deliv_pct": 41.2
+    },
+    {
+      "symbol": "TATAPOWER",
+      "last_close": 340.0,
+      "open": 339.0,
+      "high": 343.35,
+      "low": 336.2,
+      "close": 339.7,
+      "price_chg": -0.09,
+      "oi": 78732100,
+      "oi_chg": 2517200,
+      "oi_chg_pct": 3.3,
+      "deliv_pct": 57.38
+    },
+    {
+      "symbol": "TATASTEEL",
+      "last_close": 180.89,
+      "open": 179.0,
+      "high": 179.07,
+      "low": 173.88,
+      "close": 178.0,
+      "price_chg": -1.6,
+      "oi": 353603250,
+      "oi_chg": 10639750,
+      "oi_chg_pct": 3.1,
+      "deliv_pct": 44.28
     }
   ],
   "short_covering": [

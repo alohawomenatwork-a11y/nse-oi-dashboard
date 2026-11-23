@@ -980,6 +980,16 @@ function doLiveRefresh() {
 
   p.then(function(prices){
     applyLivePrices(trades, prices);
+
+    // Automatically sync Tab 3 (5-Day & 4-Day Setups) and Tab 4 (1-Day Historic Journal)
+    if (typeof refreshMultiJournalLivePrices === 'function') {
+      try { refreshMultiJournalLivePrices('5d'); } catch(e) {}
+      try { refreshMultiJournalLivePrices('4d'); } catch(e) {}
+    }
+    if (typeof refreshJournalLivePrices === 'function') {
+      try { refreshJournalLivePrices(); } catch(e) {}
+    }
+
     var now = new Date().toLocaleTimeString('en-IN');
     setStatus('&#128994; Live — updated ' + now, true);
     document.getElementById('live-ts').textContent = '';
@@ -3429,6 +3439,17 @@ def build_journal_tab(journal):
       if (typeof initEquityChartMulti === 'function') {{
         initEquityChartMulti('5d');
         initEquityChartMulti('4d');
+      }}
+      if (typeof isIndianMarketOpenNow === 'function' && isIndianMarketOpenNow()) {{
+        setTimeout(function() {{
+          if (typeof refreshMultiJournalLivePrices === 'function') {{
+            try {{ refreshMultiJournalLivePrices('5d'); }} catch(e) {{}}
+            try {{ refreshMultiJournalLivePrices('4d'); }} catch(e) {{}}
+          }}
+          if (typeof refreshJournalLivePrices === 'function') {{
+            try {{ refreshJournalLivePrices(); }} catch(e) {{}}
+          }}
+        }}, 1200);
       }}
     }});
     </script>
