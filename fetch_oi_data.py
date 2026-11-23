@@ -907,6 +907,7 @@ function fetchTradingViewDirect(symbols) {
   });
   return fetch('https://scanner.tradingview.com/india/scan', {
     method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ symbols: { tickers: tvTickers }, columns: ['close', 'high', 'low'] }),
     signal: AbortSignal.timeout(6000)
   })
@@ -927,7 +928,24 @@ function fetchTradingViewDirect(symbols) {
         });
       });
     }
+    if (Object.keys(prices).length === 0) throw new Error('No quotes parsed');
     return prices;
+  })
+  .catch(function(err) {
+    return fetch('./trade_history.json?t=' + Date.now(), { signal: AbortSignal.timeout(4000) })
+      .then(function(r) { return r.json(); })
+      .then(function(fb) {
+        var prices = {};
+        if (Array.isArray(fb)) {
+          fb.forEach(function(t) {
+            if (t.exit_price || t.entry_price) {
+              prices[t.symbol] = t.exit_price || t.entry_price;
+            }
+          });
+        }
+        if (Object.keys(prices).length > 0) return prices;
+        throw err;
+      });
   });
 }
 
@@ -3181,6 +3199,7 @@ def build_journal_tab(journal):
       }});
       return fetch('https://scanner.tradingview.com/india/scan', {{
         method: 'POST',
+        headers: {{ 'Content-Type': 'text/plain' }},
         body: JSON.stringify({{ symbols: {{ tickers: tvTickers }}, columns: ['close', 'high', 'low'] }}),
         signal: AbortSignal.timeout(6000)
       }})
@@ -3201,7 +3220,24 @@ def build_journal_tab(journal):
             }});
           }});
         }}
+        if (Object.keys(prices).length === 0) throw new Error('No quotes parsed');
         return prices;
+      }})
+      .catch(function(err) {{
+        return fetch('./trade_history.json?t=' + Date.now(), {{ signal: AbortSignal.timeout(4000) }})
+          .then(function(r) {{ return r.json(); }})
+          .then(function(fb) {{
+            var prices = {{}};
+            if (Array.isArray(fb)) {{
+              fb.forEach(function(t) {{
+                if (t.exit_price || t.entry_price) {{
+                  prices[t.symbol] = t.exit_price || t.entry_price;
+                }}
+              }});
+            }}
+            if (Object.keys(prices).length > 0) return prices;
+            throw err;
+          }});
       }});
     }}
 
@@ -3359,6 +3395,12 @@ def build_journal_tab(journal):
                 applyLivePrices(liveTrades, prices);
               }} catch(err) {{}}
             }}
+          }}
+
+          // Also keep Tab 3 (Multi-Day 5D and 4D) in sync
+          if (typeof refreshMultiJournalLivePrices === 'function') {{
+            try {{ refreshMultiJournalLivePrices('5d'); }} catch(e) {{}}
+            try {{ refreshMultiJournalLivePrices('4d'); }} catch(e) {{}}
           }}
 
           var stamp = new Date().toLocaleTimeString('en-IN');
