@@ -3532,3 +3532,9 @@ if __name__ == "__main__":
     session = get_nse_session()
     generate_html(data, os.path.join(OUT_DIR, "dashboard.html"), session=session, ref_date=analysis_date, oi_source=oi_src)
     print(f"[INFO] Open dashboard.html in your browser.")
+    try:
+        session.close()
+    except Exception:
+        pass
+    print("[INFO] All tasks complete. Exiting cleanly.")
+    sys.exit(0)
