@@ -72,6 +72,21 @@ def audit_and_sync_multiday_journal(journal, n_days=5):
             for t in trades
         )
         if needs_eval or dt_str == today_str:
+            # Ensure fresh 5m candles are fetched and stored in SQLite for missing or current day candidates
+            missing_candle_syms = []
+            for t in trades:
+                sym = t.get("symbol")
+                c.execute("SELECT count(*) FROM intraday_candles_5m WHERE symbol = ? AND trade_date = ?", (sym, dt_str))
+                cnt = c.fetchone()[0]
+                if cnt < 5 or dt_str == today_str:
+                    missing_candle_syms.append(sym)
+            if missing_candle_syms:
+                try:
+                    from fetch_oi_data import fetch_intraday_5m_bars
+                    fetch_intraday_5m_bars(list(set(missing_candle_syms)), target_date=dt_str)
+                except Exception as e:
+                    print(f"[warn] Failed fetching candles for {dt_str}: {e}")
+
             for t in trades:
                 sym = t.get("symbol")
                 c.execute("""
@@ -483,6 +498,11 @@ def render_multiday_journal_deck(journal, horizon_id="5d", horizon_title="1-Week
       <div class="sh" style="background:#131824;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>&#128220; {horizon_title} Complete Trade Execution History &amp; Risk/Reward Journal</div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button id="btn-journal-refresh-{horizon_id}" onclick="refreshMultiJournalLivePrices('{horizon_id}')" class="btn-refresh" style="font-size:11px;padding:4px 10px;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+            <span>&#128260;</span>
+            <span id="journal-refresh-lbl-{horizon_id}">Refresh Live P&amp;L</span>
+          </button>
+          <span id="journal-live-status-{horizon_id}" style="font-size:10.5px;color:var(--muted)"></span>
           <label style="font-size:11px;color:#00ff9d;cursor:pointer;display:flex;align-items:center;gap:6px">
             <input type="checkbox" id="journal-exec-filter-{horizon_id}" checked onchange="onFilterExecutedToggledMulti('{horizon_id}', this.checked)" style="accent-color:var(--green);cursor:pointer;width:14px;height:14px">
             <span><b>Show Only Executed Trades</b></span>
@@ -737,6 +757,192 @@ def generate_multiday_journal_scripts(journal_4d, journal_5d):
       if (sumEl) {{
         sumEl.innerHTML = '<span style="color:var(--blue)">&#9679; Custom What-If Active &middot; ' + trigTrades.length + ' Executed &middot; Net P&L: ' + (totalPnl >= 0 ? '+' : '') + '&#8377;' + totalPnl.toFixed(1) + '</span>';
       }}
+    }}
+
+    function refreshMultiJournalLivePrices(h) {{
+      var btn = document.getElementById('btn-journal-refresh-' + h);
+      var lbl = document.getElementById('journal-refresh-lbl-' + h);
+      var st = document.getElementById('journal-live-status-' + h);
+
+      if (btn) btn.disabled = true;
+      if (lbl) lbl.textContent = 'Updating...';
+      if (st) st.innerHTML = '<span style="color:var(--blue)">&#9203; Contacting feed...</span>';
+
+      var dataList = (h === '4d') ? MULTIDAY_JOURNAL_DATA_4D : MULTIDAY_JOURNAL_DATA_5D;
+      var todayStr = (typeof TODAY_DATE_STR !== 'undefined') ? TODAY_DATE_STR : new Date().toISOString().slice(0, 10);
+      var todayTrades = dataList.filter(function(t) {{
+        return t.date === todayStr;
+      }});
+
+      if (!todayTrades.length) {{
+        if (st) st.innerHTML = '<span style="color:var(--yel)">No ' + h.toUpperCase() + ' trades for today (' + todayStr + ')</span>';
+        if (btn) btn.disabled = false;
+        if (lbl) lbl.textContent = 'Refresh Live P&L';
+        return;
+      }}
+
+      var symList = todayTrades.map(function(t) {{ return t.symbol; }});
+      var isLocal = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (window.location.protocol === 'http:');
+      var fetchPromise;
+
+      if (isLocal) {{
+        var querySymbols = symList.map(function(s) {{ return s + '.NS'; }}).join(',');
+        var localUrl = 'http://localhost:7384/api/live?symbols=' + encodeURIComponent(querySymbols);
+        fetchPromise = fetch(localUrl, {{ signal: AbortSignal.timeout(2500) }})
+          .then(function(r) {{
+            if (!r.ok) throw new Error('Local server error ' + r.status);
+            return r.json();
+          }})
+          .catch(function() {{
+            return (typeof fetchTradingViewDirect === 'function') ? fetchTradingViewDirect(symList) : Promise.reject('No feed');
+          }});
+      }} else {{
+        fetchPromise = (typeof fetchTradingViewDirect === 'function') ? fetchTradingViewDirect(symList) : Promise.reject('No feed');
+      }}
+
+      // Fallback: If direct feed fails, fallback to same-origin trade_history JSON
+      fetchPromise = fetchPromise.catch(function() {{
+        var fallbackUrl = './trade_history_' + h + '.json?t=' + Date.now();
+        return fetch(fallbackUrl, {{ signal: AbortSignal.timeout(4000) }})
+          .then(function(r) {{ return r.json(); }})
+          .then(function(fbData) {{
+            var prices = {{}};
+            if (Array.isArray(fbData)) {{
+              fbData.forEach(function(t) {{
+                if (t.date === todayStr && (t.exit_price || t.entry_price)) {{
+                  prices[t.symbol] = t.exit_price || t.entry_price;
+                }}
+              }});
+            }}
+            if (Object.keys(prices).length > 0) return prices;
+            throw new Error('No quotes available');
+          }});
+      }});
+
+      fetchPromise
+        .then(function(prices) {{
+          if (!prices || !Object.keys(prices).length) {{
+            throw new Error('No quotes returned');
+          }}
+
+          var nowTime = new Date().toLocaleTimeString('en-IN', {{ hour: '2-digit', minute: '2-digit', hour12: false }});
+
+          todayTrades.forEach(function(t) {{
+            var ltp = prices[t.symbol];
+            if (!ltp || isNaN(ltp) || ltp <= 0) return;
+
+            if (t.triggered) {{
+              if (t.exit_reason !== 'SL Hit') {{
+                var isSlHit = (t.side === 'BUY' && ltp <= t.sl_price) || (t.side === 'SELL' && ltp >= t.sl_price);
+                if (isSlHit) {{
+                  t.exit_reason = 'SL Hit';
+                  t.exit_price = t.sl_price;
+                  t.exit_time = nowTime;
+                  var slPnl = t.side === 'BUY' ? (t.sl_price - t.entry_price) * t.qty : (t.entry_price - t.sl_price) * t.qty;
+                  t.pnl = Math.round(slPnl * 10) / 10;
+                  t.pnl_pct = t.margin_used > 0 ? Math.round((t.pnl / t.margin_used * 100) * 100) / 100 : 0;
+                  t.pnl_1to1 = t.pnl;
+                  t.pnl_1to1_pct = t.pnl_pct;
+                }} else {{
+                  t.exit_price = ltp;
+                  var curPnl = t.side === 'BUY' ? (ltp - t.entry_price) * t.qty : (t.entry_price - ltp) * t.qty;
+                  t.pnl = Math.round(curPnl * 10) / 10;
+                  t.pnl_pct = t.margin_used > 0 ? Math.round((curPnl / t.margin_used * 100) * 100) / 100 : 0;
+
+                  if (!t.target_1to1_hit) {{
+                    var is1to1 = (t.side === 'BUY' && ltp >= t.target_1to1) || (t.side === 'SELL' && ltp <= t.target_1to1);
+                    if (is1to1) {{
+                      t.target_1to1_hit = true;
+                      t.target_1to1_time = nowTime;
+                      var p1 = t.side === 'BUY' ? (t.target_1to1 - t.entry_price) * t.qty : (t.entry_price - t.target_1to1) * t.qty;
+                      t.pnl_1to1 = Math.round(p1 * 10) / 10;
+                      t.pnl_1to1_pct = t.margin_used > 0 ? Math.round((t.pnl_1to1 / t.margin_used * 100) * 100) / 100 : 0;
+                    }} else {{
+                      t.pnl_1to1 = t.pnl;
+                      t.pnl_1to1_pct = t.pnl_pct;
+                    }}
+                  }}
+
+                  if (curPnl > (t.max_profit_rupees || 0)) {{
+                    t.max_profit_rupees = Math.round(curPnl * 10) / 10;
+                    t.max_profit_pct = t.margin_used > 0 ? Math.round((curPnl / t.margin_used * 100) * 100) / 100 : 0;
+                  }}
+                }}
+              }}
+            }}
+
+            // Update row in table DOM
+            var tr = document.getElementById('trade-row-' + h + '-' + t.date + '-' + t.symbol);
+            if (tr && t.triggered) {{
+              var isWhatIf = (multiJournalModes[h] === 'whatif');
+              var exitR = isWhatIf ? t.sim_exit_reason : t.exit_reason;
+              var pnlVal = isWhatIf ? t.sim_pnl : t.pnl;
+              var pnlPct = isWhatIf ? t.sim_pnl_pct : t.pnl_pct;
+              var pnl1Val = isWhatIf ? t.sim_pnl_1to1 : t.pnl_1to1;
+              var pnl1Pct = isWhatIf ? t.sim_pnl_1to1_pct : t.pnl_1to1_pct;
+              var maxProfVal = isWhatIf ? t.sim_max_profit_rupees : t.max_profit_rupees;
+              var maxProfPct = isWhatIf ? t.sim_max_profit_pct : t.max_profit_pct;
+              var entryP = isWhatIf ? t.sim_entry_price : t.entry_price;
+              var exitP = isWhatIf ? t.sim_exit_price : t.exit_price;
+
+              var cellStatus = tr.querySelector('.cell-status');
+              var cellDetails = tr.querySelector('.cell-details');
+              var cellMaxProf = tr.querySelector('.cell-maxprof');
+              var cell1to1 = tr.querySelector('.cell-1to1');
+              var cellNorm = tr.querySelector('.cell-norm');
+
+              if (cellStatus) {{
+                if (exitR === 'SL Hit') {{
+                  cellStatus.innerHTML = '<span class="badge" style="background:rgba(255,77,106,0.18);color:var(--red)">&#10060; SL Hit</span>';
+                }} else {{
+                  cellStatus.innerHTML = '<span class="badge" style="background:rgba(0,196,122,0.18);color:var(--green)">&#9889; Active (Live LTP)</span>';
+                }}
+              }}
+              if (cellDetails) {{
+                var liveTag = (exitR !== 'SL Hit') ? '<span style="color:var(--blue);font-size:10px">(Live ' + nowTime + ')</span>' : '';
+                cellDetails.innerHTML = '&#8377;' + Number(entryP).toFixed(1) + ' &rarr; <b>&#8377;' + Number(exitP).toFixed(1) + '</b> ' + liveTag;
+              }}
+              if (cellMaxProf) {{
+                cellMaxProf.innerHTML = '<span style="color:var(--green)">+&#8377;' + Math.round(maxProfVal) + '</span> <span style="font-size:10px;color:var(--muted)">(+' + Number(maxProfPct).toFixed(1) + '%)</span>';
+              }}
+              if (cell1to1) {{
+                var p1Col = pnl1Val >= 0 ? 'var(--green)' : 'var(--red)';
+                var p1Sgn = pnl1Val >= 0 ? '+' : '';
+                cell1to1.innerHTML = '<b style="color:' + p1Col + '">' + p1Sgn + '&#8377;' + Number(pnl1Val).toFixed(1) + '</b> <span style="font-size:10.5px;color:var(--muted)">(' + p1Sgn + Number(pnl1Pct).toFixed(1) + '%)</span>';
+              }}
+              if (cellNorm) {{
+                var pnCol = pnlVal >= 0 ? 'var(--green)' : 'var(--red)';
+                var pnSgn = pnlVal >= 0 ? '+' : '';
+                cellNorm.innerHTML = '<b style="color:' + pnCol + '">' + pnSgn + '&#8377;' + Number(pnlVal).toFixed(1) + '</b> <span style="font-size:10.5px;color:var(--muted)">(' + pnSgn + Number(pnlPct).toFixed(1) + '%)</span>';
+              }}
+            }}
+          }});
+
+          if (multiJournalModes[h] === 'whatif') {{
+            recomputeWhatIfSimulatorMulti(h);
+          }} else {{
+            renderDefaultAuditLogMulti(h);
+          }}
+          initEquityChartMulti(h);
+
+          var stamp = new Date().toLocaleTimeString('en-IN');
+          if (st) st.innerHTML = '<span style="color:#00ff9d;font-weight:600">&#128994; Live LTP updated @ ' + stamp + '</span>';
+        }})
+        .catch(function(err) {{
+          var msg = (err && err.message) ? err.message : '';
+          var isBlocked = /networkerror|failed to fetch|blocked|aborted|failed/i.test(msg);
+          if (st) {{
+            if (isBlocked) {{
+              st.innerHTML = '<span style="color:var(--yel)">&#9888; Live feed blocked by browser privacy/ad-blocker. Displaying latest snapshot.</span>';
+            }} else {{
+              st.innerHTML = '<span style="color:var(--red)">&#9888; Update failed: ' + (msg || 'Market feed unavailable') + '</span>';
+            }}
+          }}
+        }})
+        .finally(function() {{
+          if (btn) btn.disabled = false;
+          if (lbl) lbl.textContent = 'Refresh Live P&L';
+        }});
     }}
     </script>
     """
