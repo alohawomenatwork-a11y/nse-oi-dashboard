@@ -1,19 +1,6 @@
 {
   "fresh_longs": [
     {
-      "symbol": "APARINDS",
-      "last_close": 14184.0,
-      "open": 14352.0,
-      "high": 14393.0,
-      "low": 13930.0,
-      "close": 14250.0,
-      "price_chg": 0.47,
-      "oi": 4700,
-      "oi_chg": 4700,
-      "oi_chg_pct": 0.0,
-      "deliv_pct": 45.04
-    },
-    {
       "symbol": "ACUTAAS",
       "last_close": 3875.0,
       "open": 3910.0,
@@ -25,6 +12,19 @@
       "oi_chg": 17850,
       "oi_chg_pct": 0.0,
       "deliv_pct": 48.03
+    },
+    {
+      "symbol": "APARINDS",
+      "last_close": 14184.0,
+      "open": 14352.0,
+      "high": 14393.0,
+      "low": 13930.0,
+      "close": 14250.0,
+      "price_chg": 0.47,
+      "oi": 4700,
+      "oi_chg": 4700,
+      "oi_chg_pct": 0.0,
+      "deliv_pct": 45.04
     }
   ],
   "fresh_shorts": [
