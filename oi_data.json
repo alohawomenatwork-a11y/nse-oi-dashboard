@@ -304,19 +304,6 @@
       "deliv_pct": 57.49
     },
     {
-      "symbol": "MARICO",
-      "last_close": 935.2,
-      "open": 937.5,
-      "high": 939.1,
-      "low": 923.5,
-      "close": 939.1,
-      "price_chg": 0.42,
-      "oi": 9957600,
-      "oi_chg": -386400,
-      "oi_chg_pct": -3.74,
-      "deliv_pct": 64.94
-    },
-    {
       "symbol": "HDFCBANK",
       "last_close": 846.2,
       "open": 849.1,
@@ -328,6 +315,19 @@
       "oi_chg": -9387050,
       "oi_chg_pct": -3.74,
       "deliv_pct": 63.82
+    },
+    {
+      "symbol": "MARICO",
+      "last_close": 935.2,
+      "open": 937.5,
+      "high": 939.1,
+      "low": 923.5,
+      "close": 939.1,
+      "price_chg": 0.42,
+      "oi": 9957600,
+      "oi_chg": -386400,
+      "oi_chg_pct": -3.74,
+      "deliv_pct": 64.94
     },
     {
       "symbol": "SUNPHARMA",
