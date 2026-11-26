@@ -475,19 +475,6 @@
       "deliv_pct": 32.59
     },
     {
-      "symbol": "NBCC",
-      "last_close": 75.94,
-      "open": 76.23,
-      "high": 76.4,
-      "low": 74.7,
-      "close": 75.5,
-      "price_chg": -0.58,
-      "oi": 90727000,
-      "oi_chg": -1384500,
-      "oi_chg_pct": -1.5,
-      "deliv_pct": 31.53
-    },
-    {
       "symbol": "BAJFINANCE",
       "last_close": 1131.35,
       "open": 1120.1,
@@ -499,6 +486,19 @@
       "oi_chg": -924750,
       "oi_chg_pct": -1.5,
       "deliv_pct": 59.88
+    },
+    {
+      "symbol": "NBCC",
+      "last_close": 75.94,
+      "open": 76.23,
+      "high": 76.4,
+      "low": 74.7,
+      "close": 75.5,
+      "price_chg": -0.58,
+      "oi": 90727000,
+      "oi_chg": -1384500,
+      "oi_chg_pct": -1.5,
+      "deliv_pct": 31.53
     },
     {
       "symbol": "MARUTI",
